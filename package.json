@@ -1,0 +1,68 @@
+{
+  "name": "dsh-pet-bridge",
+  "version": "0.1.0",
+  "description": "Bridge between DeepSeek Harness and a local desktop pet: session event push, per-session progress buckets, and 'user has actually seen it' notice acknowledgement.",
+  "keywords": [
+    "deepseek",
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "cordis",
+    "plugin",
+    "desktop-pet",
+    "notifications",
+    "typescript"
+  ],
+  "type": "module",
+  "license": "MIT",
+  "private": true,
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./client/client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "client",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": []
+    }
+  },
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "typecheck": "tsc -p tsconfig.check.json && tsc -p tsconfig.client.json && tsc -p tsconfig.test.json --noEmit",
+    "build:test": "tsc -p tsconfig.test.json",
+    "test": "npm run build:test && node --test --test-isolation=none --test-force-exit --test-timeout=60000 test-dist/tests/state.test.js test-dist/tests/protocol.test.js test-dist/tests/integration.test.js",
+    "smoke:bundle": "node tools/smoke-bundle.mjs",
+    "roundtrip": "node tools/roundtrip.mjs",
+    "check": "npm run typecheck && npm run build && npm run smoke:bundle && npm test",
+    "mock-pet": "node tools/mock-pet.mjs"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.2"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/cordis": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@deepseek-ai/schemastery": "^3.18.2",
+    "@types/node": "^24.0.0",
+    "tsdown": "^0.22.14",
+    "typescript": "^5.9.0"
+  }
+}

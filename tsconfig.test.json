@@ -1,0 +1,40 @@
+/**
+ * Compilation of the tests.
+ *
+ * Tests import the TypeScript sources directly, so the suite type-checks and
+ * exercises the same code that ships, without a declaration-emitting pass in
+ * between. The `paths` mapping is the one `tsconfig.check.json` uses, so the
+ * harness declarations resolved here are the ones a running host loads.
+ *
+ * The client half is excluded: it needs DOM libs and is checked by
+ * `tsconfig.client.json`.
+ */
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "types": ["node"],
+    "baseUrl": ".",
+    "paths": {
+      "@deepseek-ai/cordis": ["C:/Users/star_fox/.dsh/profiles/node_modules/@deepseek-ai/cordis/lib/types/index.d.ts"],
+      "@deepseek-ai/schemastery": ["C:/Users/star_fox/.dsh/profiles/node_modules/@deepseek-ai/schemastery/lib/types/index.d.ts"],
+      "@deepseek-ai/dsh-session": ["C:/Users/star_fox/.dsh/profiles/node_modules/@deepseek-ai/dsh-session/lib/types/index.d.ts"],
+      "@deepseek-ai/dsh-agent": ["C:/Users/star_fox/.dsh/profiles/node_modules/@deepseek-ai/dsh-agent/lib/types/index.d.ts"]
+    },
+    "strict": true,
+    "exactOptionalPropertyTypes": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "skipLibCheck": true,
+    "outDir": "test-dist",
+    "rootDir": ".",
+    "newLine": "lf"
+  },
+  "include": ["tests/**/*.ts", "src/**/*.ts"],
+  "exclude": ["src/client/**"]
+}

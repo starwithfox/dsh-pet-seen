@@ -1,0 +1,18 @@
+{
+  "$comment": "Type-check-only configuration for machines that have a DSH installation. Points module resolution at the live profile so the check runs against the declarations the host process actually loads, and against cordis/schemastery as they are really installed. Replace the absolute prefix when the profile lives elsewhere.",
+  "extends": "./tsconfig.types.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "declaration": false,
+    "emitDeclarationOnly": false,
+    "baseUrl": ".",
+    "paths": {
+      "@deepseek-ai/cordis": ["C:/Users/star_fox/.dsh/profiles/node_modules/@deepseek-ai/cordis/lib/types/index.d.ts"],
+      "@deepseek-ai/schemastery": ["C:/Users/star_fox/.dsh/profiles/node_modules/@deepseek-ai/schemastery/lib/types/index.d.ts"],
+      "@deepseek-ai/dsh-session": ["C:/Users/star_fox/.dsh/profiles/node_modules/@deepseek-ai/dsh-session/lib/types/index.d.ts"],
+      "@deepseek-ai/dsh-agent": ["C:/Users/star_fox/.dsh/profiles/node_modules/@deepseek-ai/dsh-agent/lib/types/index.d.ts"],
+      "@deepseek-ai/dsh-host-webserver": ["C:/Users/star_fox/.dsh/profiles/node_modules/@deepseek-ai/dsh-host-webserver/lib/types/index.d.ts"],
+      "@deepseek-ai/dsh-client-connection": ["C:/Users/star_fox/.dsh/profiles/node_modules/@deepseek-ai/dsh-client-connection/lib/types/index.d.ts"]
+    }
+  }
+}

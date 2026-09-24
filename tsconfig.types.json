@@ -1,0 +1,36 @@
+/**
+ * Type checking for the host half.
+ *
+ * The harness packages (`@deepseek-ai/dsh-session`, `dsh-agent`) and
+ * `@deepseek-ai/cordis` are imported **for types only** in `src/index.ts`; see
+ * the pinning assertions there. Resolving them is what makes the check
+ * meaningful, so this config does not attempt to run on a machine with no DSH
+ * installation — `tsconfig.check.json` is exactly this file plus the `paths`
+ * mapping that points at the live profile, and it is what `npm run typecheck`
+ * uses.
+ *
+ * There is deliberately no separate declaration-emitting pass: the plugin is
+ * consumed by the DSH loader as a runtime package, not as a typed library, and
+ * a `.d.ts` pass would be a second place for the harness types to go stale.
+ */
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "types": ["node"],
+    "strict": true,
+    "exactOptionalPropertyTypes": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "newLine": "lf"
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["src/client/**"]
+}

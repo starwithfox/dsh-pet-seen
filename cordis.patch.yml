@@ -1,0 +1,28 @@
+# ---------------------------------------------------------------------------
+# dsh-pet-bridge bundle patch
+# ---------------------------------------------------------------------------
+# A DSH plugin is mounted by a top-level YAML array of loader patch entries.
+# This one inserts the plugin into the profile's loader tree; `name` is the
+# package name resolved through the profile's node_modules.
+#
+# Install (from the repository root):
+#   dsh plugin add --profile web file:<abs path to this directory>
+# or for a live-development link:
+#   dsh plugin add --profile web link:<abs path to this directory>
+#
+# `id` must be unique in the profile. Running two bridge instances inside one
+# DSH process requires changing both `controlPort` here and in the second
+# copy's config, because the control port is a fixed loopback listener.
+- insert:
+    - id: dsh-pet-bridge
+      name: dsh-pet-bridge
+      config:
+        controlPort: 17323
+        petPort: 17322
+        notifyDelayMs: 2500
+        petEventTimeoutMs: 800
+        idleGraceMs: 1500
+        seenDwellMs: 1500
+        maxNotices: 100
+        noticeTtlMs: 86400000
+        includeTitle: true

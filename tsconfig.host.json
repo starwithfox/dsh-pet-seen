@@ -1,0 +1,31 @@
+/**
+ * Bundle configuration for the host half.
+ *
+ * This file exists to give `tsdown` a tsconfig that performs **no type
+ * checking** (`noCheck`). Type checking is a separate, explicit step
+ * (`tsconfig.check.json`) because it must resolve the harness's declarations
+ * from the live DSH installation — a resolution a bundler config should not
+ * carry, and which would otherwise make every `tsdown` run depend on a
+ * developer's local DSH layout.
+ *
+ * `module`/`moduleResolution` are Bundler here so extensionless resolution is
+ * allowed for the bundler; the checked configs use NodeNext and require
+ * explicit `.js` extensions, which is why the source always writes them.
+ */
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "types": [],
+    "noCheck": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "allowImportingTsExtensions": false,
+    "newLine": "lf"
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["src/client/**"]
+}
