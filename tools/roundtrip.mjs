@@ -259,11 +259,18 @@ assert.equal(JSON.stringify(received).includes('SECRET'), false, 'tool arguments
 const notices = await browser(`/pet-bridge/notices?sessionId=${encodeURIComponent(session.id)}`)
 assert.equal(notices.status, 200)
 assert.equal(notices.body.seenDwellMs, 20)
-// Only the unconfirmed notice is offered: the shown one is already on screen,
-// and re-sending it would make the pet open a second popup.
-assert.deepEqual(notices.body.notices.map(notice => notice.noticeId), [second.noticeId])
-assert.equal(notices.body.notices[0].targetTurnRef, '2', 'the page gets a turn reference to match against')
-console.log('6. pending notice query          ok')
+// Both open notices are offered, oldest first. `first` is already `shown` — the
+// pet has a popup up for it — and it must still be listed, because watching it
+// is the only way the popup can be retracted once the user reads the result.
+assert.deepEqual(
+  notices.body.notices.map(notice => notice.noticeId),
+  [first.noticeId, second.noticeId],
+)
+assert.equal(notices.body.notices[0].targetTurnRef, '1', 'the shown notice is still offered to the page')
+assert.equal(notices.body.notices[0].state, 'shown', 'and it is labelled as already displayed')
+assert.equal(notices.body.notices[1].targetTurnRef, '2', 'the page gets a turn reference to match against')
+assert.equal(notices.body.notices[1].state, 'pending', 'an undelivered notice is labelled pending')
+console.log('6. open notice query             ok   (pending + shown)')
 
 // A report without `observed: true` must be refused: being visible is not
 // seeing, which is the entire point of the L3 gate.
@@ -338,6 +345,16 @@ const repeat = await browser('/pet-bridge/seen', {
 })
 assert.equal(repeat.body.accepted, true)
 console.log('10. repeated observation is a no-op  ok')
+
+// The `shown` notice is now `seen` and must have left the page-facing list,
+// while the notice nothing has confirmed yet stays on offer.
+const afterSeen = await browser(`/pet-bridge/notices?sessionId=${encodeURIComponent(session.id)}`)
+assert.deepEqual(
+  afterSeen.body.notices.map(notice => notice.noticeId),
+  [second.noticeId],
+  'a seen notice is withheld; an open one is not',
+)
+console.log('11. seen notice withheld          ok')
 
 for (const dispose of disposers.splice(0)) await dispose()
 petServer.closeAllConnections()

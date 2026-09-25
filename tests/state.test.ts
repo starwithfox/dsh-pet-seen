@@ -206,12 +206,22 @@ describe('NoticeStore: notice lifecycle', () => {
     assert.equal(store.markDelivered('missing', true, 2_500), null)
   })
 
-  it('keeps only pending notices in the page-facing query', () => {
+  it('offers both pending and shown notices to the page, and only those', () => {
     const store = makeStore()
     store.createNotice(completion, 'n1', 2_000)
     store.createNotice({ ...completion, runId: 'run-2', completedAt: 2_100 }, 'n2', 2_100)
+    store.createNotice({ ...completion, runId: 'run-3', completedAt: 2_200 }, 'n3', 2_200)
+    store.createNotice({ ...completion, runId: 'run-4', completedAt: 2_300 }, 'n4', 2_300)
+
+    // The pet displayed n1: it must stay visible to the page, or the user
+    // reading that result could never have the popup retracted.
     store.applyAck('n1', 'shown')
-    assert.deepEqual(store.pendingFor('s1').map(notice => notice.noticeId), ['n2'])
+    store.applyAck('n3', 'dismissed')
+    store.applyObservation({ noticeId: 'n4', runId: 'run-4', sessionId: 's1' }, 2_400)
+
+    assert.deepEqual(store.pendingFor('s1').map(notice => notice.noticeId), ['n1', 'n2'])
+    assert.equal(store.pendingFor('s1')[0]?.state, 'shown')
+    assert.equal(store.pendingFor('s1')[1]?.state, 'pending')
   })
 
   it('expires settled notices by age but never by age alone while open', () => {

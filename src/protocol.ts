@@ -197,7 +197,7 @@ export interface VisibilityRequest {
   readonly title?: string | null
 }
 
-/** One pending notice the browser is asked to watch for. */
+/** One notice the browser is asked to watch for. */
 export interface PendingNotice {
   readonly noticeId: string
   readonly sessionId: string
@@ -205,6 +205,15 @@ export interface PendingNotice {
   readonly targetTurnRef: string | null
   readonly reason: TurnEndKind
   readonly completedAt: number
+  /**
+   * `pending` or `shown`.
+   *
+   * Carried so the page (and a human reading `/pet-bridge/notices` directly)
+   * can tell "never delivered" from "already on the pet's screen" — the two
+   * cases that used to be one, and the reason a displayed notice could not be
+   * observed at all.
+   */
+  readonly state: NoticeState
 }
 
 /** `GET /pet-bridge/notices?sessionId=...` response body. */

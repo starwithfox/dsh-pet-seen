@@ -6,13 +6,18 @@
  * between. The `paths` mapping is the one `tsconfig.check.json` uses, so the
  * harness declarations resolved here are the ones a running host loads.
  *
- * The client half is excluded: it needs DOM libs and is checked by
- * `tsconfig.client.json`.
+ * The browser half is compiled here too, which is why the DOM libs are on: the
+ * suite drives the real `src/client/**` modules against a hand-written DOM
+ * double, so the visibility and notice-selection logic under test is the code
+ * that ships rather than a copy of its rules. `tsconfig.client.json` remains
+ * the stricter gate for that half (no `node` types, Bundler resolution), and
+ * `lib/index.js` plus `client/client.js` are checked separately by
+ * `npm run smoke:bundle`.
  */
 {
   "compilerOptions": {
     "target": "ES2023",
-    "lib": ["ES2023"],
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "types": ["node"],
@@ -35,6 +40,5 @@
     "rootDir": ".",
     "newLine": "lf"
   },
-  "include": ["tests/**/*.ts", "src/**/*.ts"],
-  "exclude": ["src/client/**"]
+  "include": ["tests/**/*.ts", "src/**/*.ts"]
 }

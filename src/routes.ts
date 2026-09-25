@@ -206,6 +206,9 @@ export function mountBrowserRoutes(deps: BrowserRoutesDeps): BrowserRoutes {
         return
       }
       const notices = deps.store.pendingFor(sessionId)
+      // Both `pending` and `shown` notices are offered. A `shown` notice is one
+      // the pet already displayed, and the page has to keep watching it: that
+      // is how the popup gets retracted once the user reads the result.
       const payload: NoticesPayload = {
         v: PROTOCOL_VERSION,
         revision: deps.store.snapshotRevision,
@@ -217,6 +220,10 @@ export function mountBrowserRoutes(deps: BrowserRoutesDeps): BrowserRoutes {
           targetTurnRef: notice.targetTurnRef,
           reason: notice.reason,
           completedAt: notice.completedAt,
+          // `pending` vs `shown` is the difference between "the pet never
+          // displayed this" and "it is on screen right now" — carrying it makes
+          // the distinction visible in the payload itself, not only in `/state`.
+          state: notice.state,
         })),
         seenDwellMs: deps.seenDwellMs,
       }

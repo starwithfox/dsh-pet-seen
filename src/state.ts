@@ -432,8 +432,16 @@ export class NoticeStore {
   /**
    * Open notices for one session, oldest first.
    *
-   * A `shown` notice is already on screen, so it is not returned: re-sending it
-   * would make the pet open a second popup for the same completion.
+   * "Open" means every state the user has not settled yet: `pending` **and**
+   * `shown`. `shown` must stay visible to the page, because the popup being on
+   * screen is exactly the case the automatic cancellation exists for — the user
+   * reads the result and the pet retracts a popup it already raised. Only the
+   * terminal states are withheld: `seen` is already retired, and `dismissed`
+   * was closed by the user.
+   *
+   * This list does not drive popups, so including `shown` cannot open a second
+   * one: the pet's popup comes from the pushed `completed` event, and is
+   * suppressed for a notice it has already acknowledged.
    *
    * @param sessionId - session to filter by.
    * @returns snapshots the browser may watch for.
@@ -442,7 +450,7 @@ export class NoticeStore {
     const rows: NoticeSnapshot[] = []
     for (const record of this.notices.values()) {
       if (record.sessionId !== sessionId) continue
-      if (record.state !== 'pending') continue
+      if (record.state === 'seen' || record.state === 'dismissed') continue
       rows.push(toSnapshot(record))
     }
     rows.sort((left, right) => left.completedAt - right.completedAt)

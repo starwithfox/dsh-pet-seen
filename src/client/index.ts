@@ -10,18 +10,26 @@
  * 1. Learns the session the user is actually looking at from the client
  *    `sessions` service, and keeps the host's per-tab focus lease fresh.
  * 2. Asks the host which notices are still unconfirmed for that session.
- * 3. Watches the finished turn's own DOM row through the L1→L3 ladder in
- *    `visibility.ts`, and reports `/seen` only when L3 holds.
+ * 3. Watches the finished turn through the L1→L3 ladder in `visibility.ts`, and
+ *    reports `/seen` only when L3 holds — refreshing the focus lease first, so a
+ *    report cannot be refused for a lease that the page simply had not renewed
+ *    yet.
  *
- * What it deliberately does **not** do: mark anything seen from L1/L2 alone, or
- * from a query succeeding. Those are telemetry and liveness, not observation.
+ * Every decision it makes is in `decide.ts`; this file is only the wiring.
  *
  * @module dsh-pet-bridge/client
  */
 
 import { BROWSER_ROUTES, PROTOCOL_VERSION } from '../protocol.js'
 import type { NoticesPayload, PendingNotice, SeenResponse } from '../protocol.js'
-import { VisibilityTracker, createDomFace } from './visibility.js'
+import {
+  classifySeenOutcome,
+  createAttemptGate,
+  resolveDwellMs,
+  selectWatchTarget,
+  watchableCandidates,
+} from './decide.js'
+import { VisibilityTracker, createVisibilityDeps } from './visibility.js'
 
 /** Services this half needs. These are runtime package names, not values. */
 export const inject = ['sessions', 'connection']
@@ -50,8 +58,32 @@ const DWELL_TICK_MS = 300
 /** How often pending notices are re-queried while the page is focused. */
 const NOTICES_POLL_MS = 1_000
 
+/**
+ * Floor between two `/notices` requests, in ms.
+ *
+ * Mutations during streaming used to schedule one query per 120 ms burst on top
+ * of the 1 s poll, which measured at roughly two requests per second on a real
+ * page. The floor keeps scroll, session switches and a new result appearing
+ * responsive without letting a re-rendering conversation set the pace.
+ */
+const NOTICES_MIN_INTERVAL_MS = 500
+
 /** How often the focus lease is refreshed while the page stays focused. */
 const LEASE_REFRESH_MS = 5_000
+
+/** Fallback dwell threshold, used until the host advertises its own. */
+const DEFAULT_SEEN_DWELL_MS = 1_500
+
+/**
+ * Minimum spacing between two `/seen` attempts for the same notice, in ms.
+ *
+ * The dwell clock is the real rate limiter — a retry has to earn L3 again — so
+ * this only stops the extra attempt a 300 ms tick could fire while the clock is
+ * still satisfied, and bounds what a persistently failing host can be asked.
+ * Kept short so a refusal costs the user a couple of seconds of cancellation,
+ * not a minute.
+ */
+export const SEEN_RETRY_COOLDOWN_MS = 2_000
 
 /** Per-tab-instance id key; survives reloads of the same tab. */
 const TAB_ID_KEY = 'dsh-pet-bridge:tab-id'
@@ -87,11 +119,24 @@ function tabId(): string {
   }
 }
 
-/** Parse the numeric turn out of a `targetTurnRef`, or null. */
-function turnOf(notice: PendingNotice): number | null {
-  if (notice.targetTurnRef === null) return null
-  const turn = Number(notice.targetTurnRef)
-  return Number.isSafeInteger(turn) && turn >= 0 ? turn : null
+/**
+ * Delay before the next `/notices` query, honouring a floor between requests.
+ *
+ * @param now - current epoch ms.
+ * @param lastAt - epoch ms of the last query, or null when there never was one.
+ * @param minIntervalMs - floor between two queries.
+ * @param baseDelayMs - coalescing delay for the triggering burst.
+ * @returns milliseconds to wait before querying.
+ */
+export function nextRefreshDelay(
+  now: number,
+  lastAt: number | null,
+  minIntervalMs: number,
+  baseDelayMs: number,
+): number {
+  if (lastAt === null) return baseDelayMs
+  const elapsed = now - lastAt
+  return elapsed >= minIntervalMs ? baseDelayMs : minIntervalMs - elapsed
 }
 
 /** POST JSON, ignoring every failure: the page must never break because of this plugin. */
@@ -119,12 +164,27 @@ async function postJson(path: string, body: unknown): Promise<Record<string, unk
 export function apply(ctx: ClientContext): void {
   const log = (message: string): void => { ctx.logger?.info?.(`dsh-pet-bridge: ${message}`) }
   const id = tabId()
-  const dom = createDomFace()
-  const tracker = new VisibilityTracker({ dom, dwellMs: 1500 })
+  /**
+   * Notice ids this page has settled or been terminally refused for.
+   *
+   * Cleared on a session switch, because the host list is the authority again
+   * at that point. A merely *transient* refusal never lands here — that is D4:
+   * a race must not blacklist a notice for the life of the page.
+   */
+  const blocked = new Set<string>()
+  const attempts = createAttemptGate(SEEN_RETRY_COOLDOWN_MS)
+  const tracker = new VisibilityTracker({
+    deps: createVisibilityDeps(),
+    dwellMs: DEFAULT_SEEN_DWELL_MS,
+    // Pacing lives here, dwell lives in the tracker. A notice refused for a
+    // reason that may not repeat is reported again as soon as the cooldown has
+    // passed and the user has kept the result on screen.
+    canReport: target => attempts.canAttempt(target.noticeId, Date.now()),
+  })
+  /** Continuous-visibility threshold currently in force, in ms. */
+  let dwellMs = DEFAULT_SEEN_DWELL_MS
   /** Notices the host reported as unconfirmed for the current session. */
   let pending: PendingNotice[] = []
-  /** Notice ids whose report already went out, so a re-render cannot resend. */
-  const reported = new Set<string>()
   let currentSessionId: string | null = null
   let disposed = false
 
@@ -139,22 +199,29 @@ export function apply(ctx: ClientContext): void {
     }
   }
 
-  /** Coalesce bursts: a scroll frame must not become a request storm. */
+  /* ------------------------------------------------------------------ *
+   * Notice refresh
+   * ------------------------------------------------------------------ */
+
   let refreshTimer: ReturnType<typeof setTimeout> | null = null
+  let lastRefreshAt: number | null = null
+
+  /** Coalesce bursts, and keep a floor between two actual queries. */
   const scheduleRefresh = (): void => {
-    if (refreshTimer !== null) return
+    if (refreshTimer !== null || disposed) return
+    const delay = nextRefreshDelay(Date.now(), lastRefreshAt, NOTICES_MIN_INTERVAL_MS, 120)
     refreshTimer = setTimeout(() => {
       refreshTimer = null
       if (!disposed) void refreshNotices()
-    }, 120)
+    }, delay)
     unref(refreshTimer)
   }
 
   /** Send the current L1/L2 state so the host can maintain this tab's lease. */
-  const reportVisibility = (): void => {
+  const reportVisibility = async (): Promise<void> => {
     const { sessionId, title } = snapshot()
     currentSessionId = sessionId
-    void postJson(BROWSER_ROUTES.visibility, {
+    await postJson(BROWSER_ROUTES.visibility, {
       v: PROTOCOL_VERSION,
       tabId: id,
       sessionId,
@@ -162,6 +229,18 @@ export function apply(ctx: ClientContext): void {
       focused: document.hasFocus(),
       title,
     })
+  }
+
+  /** Point the tracker at whichever unconfirmed notice is worth watching. */
+  const retarget = (sessionId: string): void => {
+    const selection = selectWatchTarget(
+      watchableCandidates(pending, blocked),
+      sessionId,
+      // Prefer a notice whose result is on screen: an older notice scrolled out
+      // of view must not hold the watch slot.
+      turn => tracker.isTurnOnScreen(turn),
+    )
+    tracker.setTarget(selection.target)
   }
 
   /** Pull the unconfirmed notices for the current session. */
@@ -175,9 +254,11 @@ export function apply(ctx: ClientContext): void {
     if (sessionId !== currentSessionId) {
       // A session switch invalidates every previous observation immediately.
       currentSessionId = sessionId
-      reported.clear()
+      blocked.clear()
+      attempts.clear()
       tracker.setTarget(null)
     }
+    lastRefreshAt = Date.now()
     try {
       const response = await fetch(
         `${BROWSER_ROUTES.notices}?sessionId=${encodeURIComponent(sessionId)}`,
@@ -186,24 +267,32 @@ export function apply(ctx: ClientContext): void {
       if (!response.ok) return
       const payload = await response.json() as NoticesPayload
       pending = Array.isArray(payload.notices) ? payload.notices : []
+      // The host owns the threshold; validate it and restart the clock when it
+      // changes, so a slow dwell can never be defeated by time banked under the
+      // previous, shorter one.
+      const advertised = resolveDwellMs(payload.seenDwellMs, dwellMs)
+      if (tracker.setDwellMs(advertised)) {
+        dwellMs = advertised
+        log(`dwell threshold now ${advertised} ms`)
+      }
     } catch {
       return
     }
-    const next = pending.find(notice => turnOf(notice) !== null && !reported.has(notice.noticeId))
-    if (next === undefined) {
-      tracker.setTarget(null)
-      return
-    }
-    const turn = turnOf(next)
-    if (turn === null) return
-    tracker.setTarget({ sessionId, noticeId: next.noticeId, turn })
+    retarget(sessionId)
   }
 
-  /** Report an L3 observation; the host independently re-validates it. */
+  /**
+   * Report an L3 observation; the host independently re-validates it.
+   *
+   * The focus lease is refreshed first: coming back from another window, the
+   * host may still be holding the `focused: false` report the page sent on the
+   * way out, and reporting against it is refused for a lease that is merely old.
+   */
   const reportSeen = async (noticeId: string, sessionId: string): Promise<void> => {
     const notice = pending.find(candidate => candidate.noticeId === noticeId)
     if (notice === undefined) return
-    reported.add(noticeId)
+    attempts.remember(noticeId, Date.now())
+    await reportVisibility()
     const response = await postJson(BROWSER_ROUTES.seen, {
       v: PROTOCOL_VERSION,
       noticeId,
@@ -212,15 +301,23 @@ export function apply(ctx: ClientContext): void {
       tabId: id,
       observed: true,
     })
-    const accepted = (response as SeenResponse | null)?.accepted === true
-    if (!accepted) {
-      // The host is authoritative and refused; stop retrying this notice until
-      // the next query hands us a fresh list.
-      log(`observation for ${noticeId} refused: ${String((response as SeenResponse | null)?.reason ?? 'unknown')}`)
+    const outcome = classifySeenOutcome(
+      (response as SeenResponse | null)?.accepted === true,
+      (response as SeenResponse | null)?.reason,
+    )
+    if (outcome === 'retry') {
+      // Not a verdict. Re-arm the target so the next qualifying dwell reports
+      // again — a refusal must cost a couple of seconds, not the cancellation.
+      log(`observation for ${noticeId} not accepted: ${String((response as SeenResponse | null)?.reason ?? 'no-response')}`)
+      tracker.rearm()
       return
     }
+    if (outcome === 'stop') {
+      log(`observation for ${noticeId} refused: ${String((response as SeenResponse | null)?.reason ?? 'unknown')}`)
+      blocked.add(noticeId)
+    }
     pending = pending.filter(candidate => candidate.noticeId !== noticeId)
-    tracker.setTarget(null)
+    retarget(sessionId)
   }
 
   /* ------------------------------------------------------------------ *
@@ -228,7 +325,7 @@ export function apply(ctx: ClientContext): void {
    * ------------------------------------------------------------------ */
 
   const onAnyStateChange = (): void => {
-    reportVisibility()
+    void reportVisibility()
     void refreshNotices()
   }
 
@@ -272,15 +369,17 @@ export function apply(ctx: ClientContext): void {
     for (const { event, listener } of listeners) {
       window.addEventListener(event, listener, event === 'scroll' ? { capture: true, passive: true } : undefined)
     }
-    // The DOM row for a finished turn appears asynchronously, so re-query on
-    // mutations instead of assuming the first query already sees it.
+    // The finished turn's rows appear asynchronously, so re-query on mutations
+    // instead of assuming the first query already sees them. The floor in
+    // `scheduleRefresh` is what keeps a streaming re-render from setting the
+    // request rate.
     const observer = typeof MutationObserver === 'undefined'
       ? null
       : new MutationObserver(() => { scheduleRefresh() })
     observer?.observe(document.documentElement, { childList: true, subtree: true })
 
     const leaseTimer = setInterval(() => {
-      if (document.visibilityState === 'visible' && document.hasFocus()) reportVisibility()
+      if (document.visibilityState === 'visible' && document.hasFocus()) void reportVisibility()
     }, LEASE_REFRESH_MS)
     unref(leaseTimer)
 
@@ -297,7 +396,7 @@ export function apply(ctx: ClientContext): void {
     }, DWELL_TICK_MS)
     unref(dwellTimer)
 
-    reportVisibility()
+    void reportVisibility()
     void refreshNotices()
     log('client runtime started')
 

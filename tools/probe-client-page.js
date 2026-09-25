@@ -11,11 +11,15 @@
  *
  * WHAT IT ANSWERS
  *   - Is the client half loaded in this tab at all? (`tab-id` in sessionStorage)
- *   - Do the three private selectors still exist, and which turn rows are
- *     rendered? (`[data-chat-flow]`, `[data-conversation-scroll]`,
- *     `[data-chat-turn="N"]`)
- *   - Would `isTurnRowVisible()` (copied verbatim from
- *     `src/client/visibility.ts`) say the finished turn is on screen?
+ *   - Do the private selectors still exist, and which turn rows are rendered?
+ *     (`[data-chat-flow]`, `[data-conversation-scroll]`, `[data-chat-turn]`)
+ *   - How many flow items does one turn have, and of which kinds? This is the
+ *     measurement D1 was found with: the first `[data-chat-turn]` match is a
+ *     small header-sized row, while the answer is a later `assistant-step` item.
+ *   - Would `isTurnVisible()` (the rule shipping in
+ *     `src/client/visibility.ts`) say the finished turn's *result* is on
+ *     screen? Both the old and the new reading are printed so a regression is
+ *     visible at a glance.
  *   - Can the page reach the host's three same-origin routes?
  *   - Is the client runtime still alive right now? (patched `fetch` logs every
  *     `/pet-bridge/*` request the client makes)
@@ -33,10 +37,14 @@
   const TAG = '[pet-probe]'
   const log = (...parts) => console.log(TAG, ...parts)
 
-  /* Same three selectors as src/client/visibility.ts — see FLOW_SELECTOR etc. */
+  /* Same selectors as src/client/visibility.ts — see FLOW_SELECTOR etc. */
   const FLOW_SELECTOR = '[data-chat-flow]'
   const SCROLL_SELECTOR = '[data-conversation-scroll]'
   const ACTIVE_SELECTOR = "[data-phase='active']"
+  const TURN_ATTRIBUTE = 'data-chat-turn'
+  const KIND_ATTRIBUTE = 'data-chat-flow-kind'
+  /** Result-bearing kinds, most authoritative first — keep in sync with the module. */
+  const RESULT_KINDS = ['assistant-step', 'turn-error', 'turn-max-tokens']
 
   /* Session the GUI is currently showing. Edit when probing another session. */
   const SESSION_ID = 'session-8290cdd7-8b12-4d70-8c40-51a8e124e58c'
@@ -48,6 +56,90 @@
   const flow = query(FLOW_SELECTOR)
   const scroll = query(SCROLL_SELECTOR) ?? flow
 
+  const turnOf = (element) => {
+    const raw = element.getAttribute(TURN_ATTRIBUTE)
+    if (raw === null || raw === '') return null
+    const turn = Number(raw)
+    return Number.isSafeInteger(turn) && turn >= 0 ? turn : null
+  }
+
+  /** Every flow item the page renders, in document order. */
+  const flowItems = () => {
+    for (const scope of [flow, document]) {
+      if (scope === null || scope === undefined) continue
+      const items = [...scope.querySelectorAll(`[${TURN_ATTRIBUTE}]`)]
+      if (items.length > 0) return items
+    }
+    return []
+  }
+
+  /** The visible band: the scroll container clipped to the viewport. */
+  const band = () => {
+    const viewportTop = window.scrollY
+    const viewportBottom = viewportTop + window.innerHeight
+    if (scroll === null || scroll === undefined) return { top: viewportTop, bottom: viewportBottom }
+    const rect = scroll.getBoundingClientRect()
+    return { top: Math.max(rect.top, viewportTop), bottom: Math.min(rect.bottom, viewportBottom) }
+  }
+
+  const unionBox = (items) => {
+    let top = Number.POSITIVE_INFINITY
+    let bottom = Number.NEGATIVE_INFINITY
+    for (const element of items) {
+      const rect = element.getBoundingClientRect()
+      if (rect.width <= 0 || rect.height <= 0) continue
+      if (rect.top < top) top = rect.top
+      if (rect.bottom > bottom) bottom = rect.bottom
+    }
+    return bottom <= top ? null : { top, bottom }
+  }
+
+  /**
+   * The check `isTurnVisible()` performs, reported field by field.
+   *
+   * `legacy` reproduces the rule that shipped before the D1 fix — the first
+   * `[data-chat-turn="N"]` match — so the two readings can be compared live.
+   */
+  const measure = (turn) => {
+    const selector = `[data-chat-turn="${turn}"]`
+    const items = flowItems().filter(element => turnOf(element) === turn)
+    const legacyRow = flow?.querySelector(selector)
+      ?? document.querySelector(`${ACTIVE_SELECTOR} ${selector}`)
+
+    let group = null
+    let groupKind = null
+    for (const kind of RESULT_KINDS) {
+      const box = unionBox(items.filter(element => element.getAttribute(KIND_ATTRIBUTE) === kind))
+      if (box !== null) { group = box; groupKind = kind; break }
+    }
+    if (group === null) {
+      group = unionBox(items)
+      groupKind = group === null ? null : '(any item)'
+    }
+
+    const visibleBand = band()
+    const overlapOf = (box) => box === null
+      ? null
+      : Math.round(Math.min(box.bottom, visibleBand.bottom) - Math.max(box.top, visibleBand.top))
+    const legacyRect = legacyRow === null || legacyRow === undefined ? null : legacyRow.getBoundingClientRect()
+    const legacyBox = legacyRect === null || legacyRect.width <= 0 || legacyRect.height <= 0
+      ? null
+      : { top: legacyRect.top, bottom: legacyRect.bottom }
+
+    return {
+      found: items.length > 0,
+      items: items.length,
+      kinds: items.map(element => element.getAttribute(KIND_ATTRIBUTE)),
+      group: groupKind,
+      resultBox: group === null ? '-' : `${Math.round(group.top)}..${Math.round(group.bottom)}`,
+      resultOverlap: overlapOf(group),
+      observed: group !== null && overlapOf(group) > 0,
+      legacyRow: legacyRect === null ? '-' : `h=${Math.round(legacyRect.height)}`,
+      legacyOverlap: overlapOf(legacyBox),
+      legacyObserved: legacyBox !== null && overlapOf(legacyBox) > 0,
+    }
+  }
+
   log('================ environment ================')
   log('url         ', location.href)
   log('visibility  ', document.visibilityState, '| hasFocus', document.hasFocus())
@@ -56,30 +148,9 @@
   log('activeRoots ', document.querySelectorAll(ACTIVE_SELECTOR).length,
     '| flow', flow !== null, '| scroll', scroll !== null)
 
-  const rows = [...document.querySelectorAll('[data-chat-turn]')]
-  const turns = [...new Set(rows.map(row => row.dataset.chatTurn))]
+  const rows = flowItems()
+  const turns = [...new Set(rows.map(row => turnOf(row)).filter(turn => turn !== null))]
   log('turn rows rendered:', turns.length === 0 ? '(none)' : turns.join(', '))
-
-  /** The check `isTurnRowVisible()` performs, reported field by field. */
-  const measure = (turn) => {
-    const selector = `[data-chat-turn="${turn}"]`
-    const row = flow?.querySelector(selector)
-      ?? document.querySelector(`${ACTIVE_SELECTOR} ${selector}`)
-    if (row === null || row === undefined) return { found: false }
-    const rect = row.getBoundingClientRect()
-    const bounds = scroll === null || scroll === undefined
-      ? { top: 0, bottom: window.innerHeight }
-      : scroll.getBoundingClientRect()
-    const overlap = Math.min(rect.bottom, bounds.bottom) - Math.max(rect.top, bounds.top)
-    return {
-      found: true,
-      size: `${Math.round(rect.width)}x${Math.round(rect.height)}`,
-      row: `${Math.round(rect.top)}..${Math.round(rect.bottom)}`,
-      scroll: `${Math.round(bounds.top)}..${Math.round(bounds.bottom)}`,
-      overlap: Math.round(overlap),
-      observed: rect.width > 0 && rect.height > 0 && overlap > 0,
-    }
-  }
 
   log('================ geometry (viewport %d px) ================', window.innerHeight)
   if (turns.length === 0) log('no turn rows at all -> L3 can never hold')
