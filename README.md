@@ -226,7 +226,7 @@ v1 **只发**：事件名、`sessionId`、会话标题（可关、截断 160）�
 
 ```powershell
 npm run typecheck     # 对着本机运行中的 DSH 类型检查（见下）
-npm test              # 编译测试 + 37 个单测/集成测试
+npm test              # 编译测试 + 151 个单测/集成测试
 npm run build         # 两个 bundle
 npm run smoke:bundle  # 加载真实产物，校验 bundle 纯净性与 manifest
 npm run roundtrip     # 离线跑通全链路（不碰运行中的 DSH）
@@ -301,9 +301,18 @@ dsh-plugin/
 ├── tests/
 │   ├── state.test.ts
 │   ├── protocol.test.ts
-│   └── integration.test.ts   # 真 loopback：控制服务 + 推送 + /state 对齐
+│   ├── credentials.test.ts   # 手递文件只在「指定端口」时才发布（port 0 不得覆盖活桥接）
+│   ├── integration.test.ts   # 真 loopback：控制服务 + 推送 + /state 对齐
+│   ├── visibility.test.ts    # D1 取行规则 + L1/L2/L3 阶梯
+│   ├── decide.test.ts
+│   ├── client.test.ts
+│   ├── acceptance-page.test.ts
+│   ├── session-picker.test.ts
+│   └── gate-c-judge.test.ts
 └── tools/
-    ├── mock-pet.mjs      # 假桌宠
-    ├── roundtrip.mjs     # 离线全链路
+    ├── mock-pet.mjs      # 假桌宠（`--ack-shown` 用来停在 shown 态）
+    ├── roundtrip.mjs     # 离线全链路（凭据写私有临时路径，不碰活桥接）
+    ├── cdp-acceptance.mjs / gate-c-*.js / *-page.js / browser-auth.mjs
+    │                     # 真机 CDP 验收驱动（`npm run acceptance`）
     └── smoke-bundle.mjs  # 产物门禁
 ```
