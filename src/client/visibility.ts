@@ -298,8 +298,8 @@ export function unionBox(deps: VisibilityDeps, items: readonly ElementLike[]): R
 }
 
 /**
- * The box that stands for a turn's *result*, or null when nothing of it is
- * rendered.
+ * The box that stands for a turn's *result*, or null when no reliable result of
+ * it is rendered.
  *
  * This is the whole of D1. Measuring "the turn" as `[data-chat-turn="N"]`'s
  * first match measured a header-sized row a few dozen pixels tall, while the
@@ -310,20 +310,31 @@ export function unionBox(deps: VisibilityDeps, items: readonly ElementLike[]): R
  *
  * 1. the answer items (`assistant-step`) — every step when the process
  *    disclosure is open, measured together;
- * 2. failing that, the turn's failure item (`turn-error`, `turn-max-tokens`);
- * 3. failing that, the turn's items taken together, which is what is left for a
- *    turn whose result kind never rendered at all.
+ * 2. failing that, the turn's failure item (`turn-error`, `turn-max-tokens`),
+ *    which *is* the result of a turn that produced no answer;
+ * 3. failing both, nothing. A turn whose every rendered row is prompt or
+ *    process material (`user`, `steering`, `system-prompt`, `context`,
+ *    `reasoning`, `tool-call`, `turn-process`, `turn-tail`, …) has no result on
+ *    screen to read, and "the user had a real opportunity to see this result"
+ *    is simply false about it.
  *
- * Taking the *union* of the group, rather than the tallest single item, means
- * the answer counts as on screen while the user is anywhere inside it, which is
- * exactly the reading "the user had a real opportunity to see this result"
- * needs. A group with no rendered member is not used at all, so a collapsed or
- * zero-height answer falls through to the next rule instead of reporting an
- * off-screen turn as seen.
+ * Taking the *union* of a result group, rather than its tallest single item,
+ * means the answer counts as on screen while the user is anywhere inside it,
+ * which is exactly the reading the dwell rule needs. A group with no rendered
+ * member is not used at all, so a collapsed or zero-height answer does not
+ * report an off-screen turn as seen.
+ *
+ * Rule 3 used to fall back to the union of *every* item of the turn. That was a
+ * defect: with the answer not rendered — a virtualized or collapsed turn, or a
+ * turn that only ever produced process rows — the user's own message or a tool
+ * row stood in for the result, and the notice was retired while nobody had seen
+ * anything. It is the same "silently swallowed notice" failure this module
+ * exists to prevent, so the fallback is gone and the caller reads null as "not
+ * observed".
  *
  * @param deps - DOM face to inspect.
  * @param turn - the turn number to measure.
- * @returns the result rectangle, or null.
+ * @returns the result rectangle, or null when the turn shows no result.
  */
 export function turnResultBox(deps: VisibilityDeps, turn: number): RectFace | null {
   const items = turnItems(deps, turn)
@@ -332,7 +343,7 @@ export function turnResultBox(deps: VisibilityDeps, turn: number): RectFace | nu
     const box = unionBox(deps, items.filter(item => kindOf(item) === kind))
     if (box !== null) return box
   }
-  return unionBox(deps, items)
+  return null
 }
 
 /**

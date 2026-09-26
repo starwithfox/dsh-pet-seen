@@ -103,15 +103,35 @@ describe('D1: which element stands for the result', () => {
     assert.equal(isTurnVisible(scene.deps(), 5), true)
   })
 
-  it('falls back to the turn items when no result kind rendered', () => {
+  it('reports nothing when no result kind rendered', () => {
     const scene = makeScene()
+    /*
+     * Prompt and process rows only. Unioning every item of the turn used to make
+     * this turn count as seen — the user was looking at their own message or at
+     * a tool row, and the notice was retired anyway. Nothing here is a result,
+     * so the turn is not observed at all.
+     */
     scene.setItems([
-      item(6, 'tool-call', { top: 100, bottom: 300 }),
+      item(6, 'user', { top: 100, bottom: 300 }),
       item(6, 'tool-call', { top: 320, bottom: 900 }),
     ])
+    assert.equal(turnResultBox(scene.deps(), 6), null)
+    assert.equal(isTurnVisible(scene.deps(), 6), false)
+  })
+
+  it('still credits a failure item when the turn rendered no answer', () => {
+    const scene = makeScene()
+    // The no-result rule must not swallow the terminal notices: an error or a
+    // max-tokens stop *is* what this turn has to say.
+    scene.setItems([
+      item(6, 'user', { top: -9_000, bottom: -8_800 }),
+      item(6, 'reasoning', { top: 100, bottom: 320 }),
+      item(6, 'turn-max-tokens', { top: 400, bottom: 700 }),
+    ])
     const box = turnResultBox(scene.deps(), 6)
-    assert.equal(box?.top, 100)
-    assert.equal(box?.bottom, 900)
+    assert.equal(box?.top, 400)
+    assert.equal(box?.bottom, 700)
+    assert.equal(isTurnVisible(scene.deps(), 6), true)
   })
 
   it('skips zero-height placeholders and collapsed answers', () => {
