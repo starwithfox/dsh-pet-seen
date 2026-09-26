@@ -16,8 +16,10 @@
  * the browser routes without starting a real host. The same-origin gate and the
  * focus-lease check are asserted here rather than assumed.
  *
- * It writes to the same `~/.dsh/pet-bridge.json` the plugin uses, so do not run
- * it while a real bridge is running.
+ * It publishes its handshake file to a private temp path, so it is safe to run
+ * while a real bridge is serving DSH. (It used to write the shared
+ * `~/.dsh/pet-bridge.json`: the port-0 test instance then overwrote the live
+ * credentials and a running DSH answered 401 to its own pet.)
  *
  * Usage: node tools/roundtrip.mjs
  *
@@ -25,12 +27,17 @@
  */
 
 import assert from 'node:assert/strict'
+import { mkdtempSync, rmSync } from 'node:fs'
 import { createServer } from 'node:http'
+import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)))
 const { apply, PROTOCOL_VERSION } = await import(pathToFileURL(join(root, 'lib/index.js')).href)
+
+/** Private credential path for this run; never the shared user path. */
+const scratch = mkdtempSync(join(tmpdir(), 'dsh-pet-bridge-roundtrip-'))
 
 /** Everything the plugin pushes at the pet. */
 const received = []
@@ -116,6 +123,7 @@ const ctx = {
 
 apply(ctx, {
   controlPort: 0,
+  tokenFile: join(scratch, 'pet-bridge.json'),
   petPort,
   // Deliver immediately: this script is about the wire format, not the "did the
   // user see it first" race, which the test suite covers.
@@ -361,4 +369,5 @@ petServer.closeAllConnections()
 petServer.close()
 browserServer.closeAllConnections()
 browserServer.close()
+rmSync(scratch, { recursive: true, force: true })
 console.log('\nround trip complete: events -> notice -> popup -> ack -> L3 observation -> cancel')

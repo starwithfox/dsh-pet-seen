@@ -14,7 +14,15 @@
  *   `state`, `quit`
  *
  * Usage:
- *   node tools/mock-pet.mjs [--port 17322] [--no-handshake] [--quiet]
+ *   node tools/mock-pet.mjs [--port 17322] [--no-handshake] [--quiet] [--ack-shown]
+ *
+ * `--ack-shown` makes the pet acknowledge every delivered completion as
+ * `shown` straight away, the way a real pet does once it has put the popup on
+ * screen. It exists because the `shown` state cannot be reached by hand: the
+ * page observes a fresh notice within a couple of seconds, so a human typing
+ * `seen <id>` always loses the race and the notice is retired before it is ever
+ * displayed. Acceptance runs need the notice parked in `shown` — that is the
+ * state D2 was about.
  *
  * @module tools/mock-pet
  */
@@ -35,6 +43,7 @@ const has = (name) => args.includes(`--${name}`)
 const port = Number(flag('port', '17322'))
 const quiet = has('quiet')
 const autoHandshake = !has('no-handshake')
+const autoAckShown = has('ack-shown')
 
 /** Popups this pet believes are on screen, keyed by noticeId. */
 const shown = new Map()
@@ -115,6 +124,13 @@ function handleEvent(event) {
       }
       shown.set(event.noticeId, event)
       log(`${label} completed -> SHOW POPUP notice=${event.noticeId} turn=${event.targetTurnRef} ${event.title ?? ''}`)
+      if (autoAckShown && typeof event.noticeId === 'string') {
+        // A real pet reports the popup the moment it is on screen. Doing this
+        // immediately is what parks the notice in `shown` before the page can
+        // observe it, which is the state the D2 acceptance case needs.
+        void control('/ack', { v: 1, noticeId: event.noticeId, action: 'shown' })
+          .then(result => log(`  auto-ack shown ${event.noticeId} -> ${JSON.stringify(result)}`))
+      }
       return
     }
     case 'notice/seen': {
@@ -186,6 +202,13 @@ server.listen(port, '127.0.0.1', async () => {
 })
 
 const rl = createInterface({ input: process.stdin })
+/*
+ * Run as a background job, stdin is a pipe that may be closed under us. Without
+ * this guard an EPIPE on the readline stream is an unhandled 'error' and takes
+ * the mock pet down mid-acceptance — after it has already handed the host a
+ * handshake, which would look like the plugin losing its pet.
+ */
+process.stdin.on('error', () => {})
 rl.on('line', async (line) => {
   const [command, argument] = line.trim().split(/\s+/)
   switch (command) {

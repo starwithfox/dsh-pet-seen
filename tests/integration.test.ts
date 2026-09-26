@@ -12,7 +12,10 @@
  * DELIVERY-ROUND1.md.
  */
 import assert from 'node:assert/strict'
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { after, before, describe, it } from 'node:test'
 import { bridge } from './harness.js'
 
@@ -118,6 +121,13 @@ interface Harness {
  * Reading the handshake file instead would race with the file's other writer
  * (the plugin writes it, but so does every other test instance in the process).
  *
+ * Every instance here publishes to its **own** file under a fresh temp
+ * directory. That is not tidiness: `writeTokenFile` defaults to the shared
+ * `~/.dsh/pet-bridge.json`, so an unisolated instance leaves a random port and
+ * a dead token in the credentials a *running* DSH depends on — which is what
+ * left a live bridge answering 401 to its own pet. The `tokenFile` field is the
+ * fix, and `tests/credentials.test.ts` pins the rule.
+ *
  * @param petPort - port of the fake pet.
  * @returns captured listeners plus the bound control endpoint.
  */
@@ -125,6 +135,8 @@ async function startPlugin(petPort: number): Promise<Harness> {
   let sessionEvent: Harness['emitSessionEvent'] | null = null
   let agentStatus: Harness['emitAgentStatus'] | null = null
   const disposers: Array<() => void | Promise<void>> = []
+  const scratch = mkdtempSync(join(tmpdir(), 'dsh-pet-bridge-integration-'))
+  const tokenFile = join(scratch, 'pet-bridge.json')
   let resolveBound: (bound: { port: number, token: string }) => void = () => {}
   let rejectBound: (error: Error) => void = () => {}
   const bound = new Promise<{ port: number, token: string }>((resolve, reject) => {
@@ -167,6 +179,7 @@ async function startPlugin(petPort: number): Promise<Harness> {
     ctx as unknown as Parameters<typeof apply>[0],
     {
       controlPort: 0,
+      tokenFile,
       petPort,
       notifyDelayMs: 0,
       petEventTimeoutMs: 500,
@@ -189,6 +202,10 @@ async function startPlugin(petPort: number): Promise<Harness> {
   const endpoint = await bound
   assert.ok(endpoint.port > 0, 'control listener bound a real port')
   assert.ok(endpoint.token.length > 0, 'a token was minted')
+  assert.ok(existsSync(tokenFile), 'the configured token file was published')
+  const published = JSON.parse(readFileSync(tokenFile, 'utf8')) as { controlPort?: number, token?: string }
+  assert.equal(published.controlPort, endpoint.port, 'the published port is the bound one')
+  assert.equal(published.token, endpoint.token, 'the published token is the minted one')
 
   return {
     get emitSessionEvent() {
@@ -203,6 +220,7 @@ async function startPlugin(petPort: number): Promise<Harness> {
     token: endpoint.token,
     dispose: () => {
       for (const disposer of disposers.splice(0)) void disposer()
+      rmSync(scratch, { recursive: true, force: true })
     },
   }
 }

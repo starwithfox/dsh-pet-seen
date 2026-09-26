@@ -48,6 +48,13 @@ export const inject = ['agents', 'sessions']
 export const Config = Schema.object({
   /** Loopback port for `/hello`, `/state`, `/ack`. */
   controlPort: Schema.number().default(DEFAULT_CONTROL_PORT),
+  /**
+   * Where to publish the handshake file. Empty means the shared
+   * `~/.dsh/pet-bridge.json`. A `controlPort: 0` instance (tests, offline
+   * tools) must point this at its own file, because otherwise it would
+   * overwrite the credentials of the bridge that is actually serving DSH.
+   */
+  tokenFile: Schema.string().default(''),
   /** Port the pet listens on before it has handshaken. */
   petPort: Schema.number().default(DEFAULT_PET_PORT),
   /** Wait this long for a browser observation before pushing `completed`. */
@@ -69,6 +76,7 @@ export const Config = Schema.object({
 /** Resolved configuration. */
 export type BridgeConfig = {
   controlPort: number
+  tokenFile: string
   petPort: number
   notifyDelayMs: number
   petEventTimeoutMs: number
@@ -485,6 +493,7 @@ export function apply(
     }
     void startControlServer({
       port: config.controlPort,
+      ...(config.tokenFile === '' ? {} : { tokenFile: config.tokenFile }),
       statePayload,
       onHello: (port) => {
         const wasHandshaken = client.isHandshaken

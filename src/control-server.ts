@@ -56,6 +56,14 @@ export interface ControlServerDeps {
   readonly onBound?: (result:
     | { readonly ok: true, readonly port: number }
     | { readonly ok: false, readonly reason: string }) => void
+  /**
+   * Path of the handshake file to publish, overriding {@link tokenFilePath}.
+   *
+   * A test or tool instance that binds an ephemeral port **must** set this:
+   * otherwise it would overwrite the credentials of a bridge that is already
+   * serving a real host process. See {@link startControlServer} for the rule.
+   */
+  readonly tokenFile?: string
   /** Optional diagnostic sink. */
   readonly log?: (message: string) => void
 }
@@ -70,8 +78,14 @@ export interface ControlServer {
   readonly close: () => Promise<void>
 }
 
-/** Where the handshake file lives for the pet to read. */
-export function tokenFilePath(): string {
+/**
+ * Where the handshake file lives for the pet to read.
+ *
+ * @param override - explicit path to use instead of the shared user path.
+ * @returns the override, or `~/.dsh/pet-bridge.json`.
+ */
+export function tokenFilePath(override?: string): string {
+  if (override !== undefined && override !== '') return override
   return join(homedir(), '.dsh', 'pet-bridge.json')
 }
 
@@ -129,10 +143,11 @@ function presentedToken(req: IncomingMessage, query: URLSearchParams): string | 
  *
  * @param port - the bound control port.
  * @param token - the minted bearer token.
+ * @param override - explicit destination; defaults to {@link tokenFilePath}.
  * @returns an error message when writing failed, else null.
  */
-export function writeTokenFile(port: number, token: string): string | null {
-  const path = tokenFilePath()
+export function writeTokenFile(port: number, token: string, override?: string): string | null {
+  const path = tokenFilePath(override)
   try {
     mkdirSync(dirname(path), { recursive: true })
     const staged = `${path}.tmp`
@@ -153,6 +168,13 @@ export function writeTokenFile(port: number, token: string): string | null {
 
 /**
  * Start the control listener.
+ *
+ * Credential-publishing rule: the shared handshake file is written **only** for
+ * a listener that was asked for a *specific* port. An instance with
+ * `port: 0` — a test, the offline round-trip script, any throwaway — is not the
+ * host's bridge, so publishing its random port and token would break whatever
+ * real bridge is running (this is exactly how `npm run check` once left a live
+ * DSH unreachable). Such an instance must pass `tokenFile` to opt in.
  *
  * @param deps - collaborators and bind port.
  * @returns the running server, or a failure reason when the port is unusable.
@@ -184,8 +206,12 @@ export async function startControlServer(
     deps.onBound?.({ ok: false, reason: bound.reason })
     return bound
   }
-  const writeError = writeTokenFile(bound.port, token)
-  if (writeError !== null) log(`could not write ${tokenFilePath()}: ${writeError}`)
+  const ephemeral = deps.port === 0 && (deps.tokenFile === undefined || deps.tokenFile === '')
+  const writeError = ephemeral
+    ? (log('ephemeral control port: not publishing credentials to the shared path'
+        + ` (${tokenFilePath()}); pass \`tokenFile\` to publish elsewhere`), null)
+    : writeTokenFile(bound.port, token, deps.tokenFile)
+  if (writeError !== null) log(`could not write ${tokenFilePath(deps.tokenFile)}: ${writeError}`)
   log(`control listener on 127.0.0.1:${bound.port}`)
   deps.onBound?.({ ok: true, port: bound.port })
   return {
