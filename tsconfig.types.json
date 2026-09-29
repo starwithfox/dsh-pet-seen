@@ -2,10 +2,11 @@
  * Type checking for the host half.
  *
  * The harness packages (`@deepseek-ai/dsh-session`, `dsh-agent`) and
- * `@deepseek-ai/cordis` are imported **for types only** in `src/index.ts`; see
- * the pinning assertions there. Resolving them is what makes the check
- * meaningful, so this config does not attempt to run on a machine with no DSH
- * installation — `tsconfig.check.json` is exactly this file plus the `paths`
+ * `@deepseek-ai/cordis` are imported **for types only** in `src/pins.ts` (the
+ * host-coupling module; `src/index.ts` re-exports the faces from there and
+ * references no DSH internal type itself). Resolving them is what makes the
+ * check meaningful, so this config does not attempt to run on a machine with no
+ * DSH installation — `tsconfig.check.json` is exactly this file plus the `paths`
  * mapping that points at the live profile, and it is what `npm run typecheck`
  * uses.
  *

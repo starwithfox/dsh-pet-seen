@@ -41,8 +41,9 @@ export const MAX_MESSAGE_LENGTH = 240
 
 /**
  * Normalized event names. These are semantics, not raw harness event names:
- * several raw events collapse onto one normalized event (see
- * {@link normalizeSessionEvent}).
+ * several raw events collapse onto one normalized event. The mapping itself
+ * lives host-side — `completionDispatch` in `src/index.ts` for settled runs,
+ * and the `session/event` handler for the `running` / `error` chatter.
  */
 export type PetEventName =
   | 'idle'
@@ -55,6 +56,10 @@ export type PetEventName =
 /**
  * Turn-end reason kinds the notification state machine distinguishes. Mirrors
  * `TurnEndReasonMap` from `@deepseek-ai/dsh-session` without importing it.
+ *
+ * `'unknown'` is deliberately *not* one of the harness kinds: it is what a
+ * missing, malformed or not-yet-named reason degrades to, and it must never be
+ * treated as a successful completion.
  */
 export type TurnEndKind =
   | 'completed'
@@ -63,6 +68,17 @@ export type TurnEndKind =
   | 'error'
   | 'max-tokens'
   | 'interrupted'
+  | 'unknown'
+
+/**
+ * The event names that may carry a settled run's `noticeId`.
+ *
+ * These are the two *result* events. `error` appears in both roles — a
+ * notice-bearing result and a running-time failure report — so the pet's rule is
+ * "pop up only when `noticeId` is present", never "when the name is `error`".
+ * Everything else (`idle`, `running`, `session/removed`) is lifecycle chatter.
+ */
+export const NOTICE_EVENT_NAMES: readonly PetEventName[] = ['completed', 'error']
 
 /** A recorded `turn/end` outcome plus the turn reference the browser can match. */
 export interface TurnEndRecord {

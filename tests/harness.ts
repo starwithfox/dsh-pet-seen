@@ -14,3 +14,9 @@
  */
 
 export * as bridge from '../src/index.js'
+
+/*
+ * The host-coupling module, re-exported for the same reason: `tests/pins.test.ts`
+ * must exercise the production pin mechanism, not a copy of it.
+ */
+export type { Assert, PinnedHarnessShapes, Satisfies, SessionFace } from '../src/pins.js'

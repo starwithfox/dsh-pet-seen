@@ -29,14 +29,31 @@ import {
   PROTOCOL_VERSION,
   clampTitle,
 } from './protocol.js'
-import type { NoticeSnapshot, PetEvent, StatePayload, TurnEndKind } from './protocol.js'
+import type { NoticeSnapshot, PetEvent, PetEventName, StatePayload, TurnEndKind } from './protocol.js'
 import { NoticeStore, buildEvent } from './state.js'
 import type { RunCompletion } from './state.js'
+import type {
+  AgentErrorListener,
+  AgentFace,
+  AgentStatusListener,
+  SessionEventFace,
+  SessionEventListener,
+  SessionFace,
+} from './pins.js'
 import { PetClient } from './pet-client.js'
 import { startControlServer } from './control-server.js'
 import type { ControlServer } from './control-server.js'
 import { DEFAULT_LEASE_TTL_MS, mountBrowserRoutes } from './routes.js'
 import type { BrowserRoutes } from './routes.js'
+
+/*
+ * The harness-shape faces and the compile-time pins that tie them to the real
+ * declarations live in `./pins.ts`, which is the only module that references
+ * DSH's internal types. They are re-exported here because they were part of this
+ * module's surface before the move; `Assert` / `Satisfies` deliberately are not
+ * — they are build-time machinery, not plugin contract.
+ */
+export type { AgentFace, PinnedHarnessShapes, SessionEventFace, SessionFace } from './pins.js'
 
 /** Plugin name as the loader knows it. */
 export const name = 'dsh-pet-bridge'
@@ -87,51 +104,6 @@ export type BridgeConfig = {
   includeTitle: boolean
 }
 
-/*
- * Minimal structural faces for the harness values this plugin touches.
- *
- * Declaring them here rather than importing the harness classes keeps the host
- * bundle free of harness imports, and keeps the plugin compiling against a
- * harness whose internal type names moved. The two `@ts-expect-error`-free
- * assertions below pin each face to the real declaration, so a shape drift
- * fails the type check instead of failing at 3am in a user's session.
- */
-
-/** The slice of `Session` this plugin reads. */
-export interface SessionFace {
-  readonly id: unknown
-  readonly header: {
-    readonly cwd?: string
-    /** Present exactly for subagent sessions. */
-    readonly origin?: 'subagent'
-    /** Session title, when the store keeps one on the header. */
-    readonly title?: string
-  }
-}
-
-/** The slice of one `session/event` entry this plugin reads. */
-export interface SessionEventFace {
-  readonly type: string
-  readonly seq: number
-  readonly time: number
-  readonly data: unknown
-}
-
-/** The slice of `Agent` this plugin reads. */
-export interface AgentFace {
-  readonly session: SessionFace
-  readonly status: 'idle' | 'running'
-}
-
-/** The `session/event` listener signature. */
-type SessionEventListener = (session: SessionFace, event: SessionEventFace) => void
-
-/** The `agent/status` listener signature. */
-type AgentStatusListener = (payload: { agent: AgentFace, status: 'idle' | 'running' }) => void
-
-/** The `agent/error` listener signature. */
-type AgentErrorListener = (payload: { agent: AgentFace, error: unknown }) => void
-
 /** Context capabilities this plugin uses. */
 export interface PluginContext {
   on: ((name: 'session/event', listener: SessionEventListener) => unknown) & {
@@ -146,17 +118,22 @@ export interface PluginContext {
   logger?: { warn: (message: string) => void, info: (message: string) => void }
 }
 
-/*
- * Compile-time pins. Each statement fails to compile if the real harness type
- * stops being assignable to the face this plugin codes against.
+/**
+ * Narrow an arbitrary `turn/end` reason to the kinds the protocol names.
+ *
+ * Anything unrecognized — a malformed reason, an absent one, or a kind a newer
+ * DSH added — becomes `'unknown'`, which is *not* a completion
+ * ({@link completionDispatch}). Reporting success is the one outcome we must
+ * never guess at: a wrong "your task finished" hides a failure, while a missing
+ * popup is caught up through `/state`. The `_ReasonsCovered` pin makes the
+ * "newer DSH added a kind" half of this a build failure rather than a runtime
+ * default, so this branch only ever handles genuinely broken input.
+ *
+ * @param reason - raw `turn/end.data.reason`.
+ * @returns the protocol-facing kind.
  */
-type _SessionPinned = import('@deepseek-ai/dsh-session').Session extends SessionFace ? true : never
-type _AgentPinned = import('@deepseek-ai/dsh-agent').Agent extends AgentFace ? true : never
-export type PinnedHarnessShapes = [_SessionPinned, _AgentPinned]
-
-/** Narrow `TurnEndReason` to the kinds the protocol names. */
 function turnEndKind(reason: unknown): TurnEndKind {
-  if (typeof reason !== 'object' || reason === null) return 'completed'
+  if (typeof reason !== 'object' || reason === null) return 'unknown'
   const kind = (reason as { kind?: unknown }).kind
   switch (kind) {
     case 'completed':
@@ -167,26 +144,50 @@ function turnEndKind(reason: unknown): TurnEndKind {
     case 'interrupted':
       return kind
     default:
-      // The reason map is merge-extensible, so an unknown kind must degrade to
-      // something safe. `completed` is the only kind that reports success, and
-      // it is also what a plain turn end means when no reason was recorded.
-      return 'completed'
+      return 'unknown'
   }
 }
 
-/** Bounded, content-free description of a failure. */
-function errorSummary(error: unknown): string {
-  if (typeof error === 'string') return error.slice(0, 200)
-  if (typeof error === 'object' && error !== null) {
-    const code = (error as { code?: unknown }).code
-    if (typeof code === 'string' && code !== '') return code.slice(0, 64)
-    const message = (error as { message?: unknown }).message
-    if (typeof message === 'string' && message !== '') return message.slice(0, 200)
+/** Categories of failure the pet is allowed to see. */
+export type ErrorCategory = 'network' | 'auth' | 'rate-limit' | 'aborted' | 'unknown'
+
+/**
+ * Map a failure to a closed category, forwarding nothing but the category.
+ *
+ * The raw value is read for `code` **shape** only, never echoed: harness error
+ * text routinely restates the user's prompt, a tool argument or a remote
+ * response body, and `README.md` §4.4 promises the pet never receives it. Only
+ * membership in {@link ErrorCategory} crosses the wire.
+ *
+ * @param error - the raw value from `agent/error`.
+ * @returns the category to report.
+ */
+function errorCategory(error: unknown): ErrorCategory {
+  const code = typeof error === 'object' && error !== null
+    ? (error as { code?: unknown }).code
+    : undefined
+  if (typeof code === 'string' && code !== '') {
+    const normalized = code.toLowerCase()
+    if (/econn|etimedout|enotfound|eai_again|socket|network|dns|fetch/.test(normalized)) return 'network'
+    if (/unauthor|forbidden|401|403|credential|api.?key/.test(normalized)) return 'auth'
+    if (/rate.?limit|429|quota|too.?many.?requests/.test(normalized)) return 'rate-limit'
+    if (/abort|cancel/.test(normalized)) return 'aborted'
   }
-  return 'error'
+  return 'unknown'
 }
 
-/** Human-readable one-liner for a completion, by turn-end kind. */
+/** Content-free one-liner for a failure, by category. */
+function errorMessage(category: ErrorCategory): string {
+  switch (category) {
+    case 'network': return '运行出错：网络连接失败'
+    case 'auth': return '运行出错：认证失败'
+    case 'rate-limit': return '运行出错：请求过于频繁'
+    case 'aborted': return '运行已中止'
+    case 'unknown': return '运行出错'
+  }
+}
+
+/** Human-readable one-liner for a settled run, by turn-end kind. */
 function completionMessage(kind: TurnEndKind): string {
   switch (kind) {
     case 'completed': return '任务完成'
@@ -195,6 +196,46 @@ function completionMessage(kind: TurnEndKind): string {
     case 'error': return '运行出错'
     case 'aborted': return '已中止'
     case 'interrupted': return '中断（会话恢复时补记）'
+    case 'unknown': return '运行结束（结束原因无法识别）'
+  }
+}
+
+/** How one settled run maps onto the wire. */
+interface CompletionDispatch {
+  /** Normalized event name carrying this result. */
+  readonly event: PetEventName
+  /** Whether this reason mints a notice the pet may pop up and ack. */
+  readonly notice: boolean
+}
+
+/**
+ * Map a settled run's reason to its event, per the design's normalization table.
+ *
+ * The point of the split is that `reason` alone no longer has to carry the whole
+ * meaning: a pet can act on the event name and use `reason` only for wording. In
+ * particular `aborted` / `interrupted` are **not** completions — they mean the
+ * run stopped, so they mint no notice and nothing pops. `error` / `blocked` do
+ * mint one, and the pet decides whether a failed run deserves a popup; that is
+ * why a notice-bearing `error` carries `noticeId` while the running-time
+ * failures (`tool/result`, `agent/error`) do not.
+ *
+ * @param kind - the settled run's reason.
+ * @returns the event name and whether a notice is minted.
+ */
+export function completionDispatch(kind: TurnEndKind): CompletionDispatch {
+  switch (kind) {
+    case 'completed':
+      return { event: 'completed', notice: true }
+    // Truncated output still finished the run; `completionMessage` says so.
+    case 'max-tokens':
+      return { event: 'completed', notice: true }
+    case 'error':
+    case 'blocked':
+      return { event: 'error', notice: true }
+    case 'aborted':
+    case 'interrupted':
+    case 'unknown':
+      return { event: 'idle', notice: false }
   }
 }
 
@@ -268,21 +309,29 @@ export function apply(
   }
 
   /**
-   * Push `completed` for one settled run.
+   * Push one settled run's result event.
    *
    * If the browser already confirmed the *exact* notice, the event carries
    * `seen: true` and the pet is expected not to pop anything. Otherwise it is a
    * normal popup, and a later observation becomes a separate `notice/seen` that
    * retires it.
+   *
+   * @param completion - the settled run.
+   * @param noticeId - notice the pet keys its popup on.
+   * @param eventName - `completed` or `error`, from {@link completionDispatch}.
    */
-  const deliverCompletion = (completion: RunCompletion, noticeId: string): void => {
+  const deliverCompletion = (
+    completion: RunCompletion,
+    noticeId: string,
+    eventName: PetEventName,
+  ): void => {
     // Read the notice's state rather than a side table: an observation that
     // landed during `notifyDelayMs` moved it to `seen` already.
     const seen = store.notice(noticeId)?.state === 'seen'
     const title = store.progressSnapshot().find(row => row.sessionId === completion.sessionId)?.title ?? null
     const event = buildEvent({
       id: randomUUID(),
-      event: 'completed',
+      event: eventName,
       hook: 'run/idle',
       sessionId: completion.sessionId,
       runId: completion.runId,
@@ -305,8 +354,29 @@ export function apply(
     })
   }
 
-  /** Turn a settled run into a notice plus its (delayed) delivery. */
+  /** Turn a settled run into a (possibly notice-less) event plus its delivery. */
   const onCompletion = (completion: RunCompletion): void => {
+    const dispatch = completionDispatch(completion.reason)
+    if (!dispatch.notice) {
+      // Not a completion: the run stopped (`aborted` / `interrupted`) or its
+      // reason was unreadable. The pet is told the lifecycle changed and nothing
+      // more — no notice means nothing can pop, and nothing has to be acked.
+      const row = store.progressSnapshot().find(entry => entry.sessionId === completion.sessionId)
+      log(`run ${completion.runId} settled as ${completion.reason}: reported as ${dispatch.event}, no notice`)
+      void push(buildEvent({
+        id: randomUUID(),
+        event: dispatch.event,
+        hook: 'run/idle',
+        sessionId: completion.sessionId,
+        runId: completion.runId,
+        targetTurnRef: completion.targetTurnRef,
+        at: completion.completedAt,
+        title: config.includeTitle ? row?.title ?? null : null,
+        message: completionMessage(completion.reason),
+        reason: completion.reason,
+      }))
+      return
+    }
     const noticeId = randomUUID()
     store.createNotice(completion, noticeId, completion.completedAt)
     const notice = store.notice(noticeId)
@@ -314,14 +384,14 @@ export function apply(
     // A run with no page-matchable turn reference can never be auto-observed,
     // so it goes out immediately and stays until the pet closes it.
     if (completion.targetTurnRef === null || config.notifyDelayMs <= 0) {
-      deliverCompletion(completion, noticeId)
+      deliverCompletion(completion, noticeId, dispatch.event)
       return
     }
     // Give the browser a short window to confirm the result is on screen before
     // the popup would otherwise be raised. This never blocks harness work.
     const timer = setTimeout(() => {
       deliveries.delete(noticeId)
-      deliverCompletion(completion, noticeId)
+      deliverCompletion(completion, noticeId, dispatch.event)
     }, config.notifyDelayMs)
     timer.unref?.()
     deliveries.set(noticeId, timer)
@@ -456,6 +526,8 @@ export function apply(
     const sessionId = String(agent.session.id)
     const at = Date.now()
     const row = store.progressSnapshot().find(entry => entry.sessionId === sessionId)
+    // A failure during the run. It carries no `noticeId`: only a settled run's
+    // result does, so the pet never pops a popup for this on its own.
     void push(buildEvent({
       id: randomUUID(),
       event: 'error',
@@ -463,7 +535,7 @@ export function apply(
       sessionId,
       runId: row?.runId ?? null,
       at,
-      message: `运行出错：${errorSummary(error)}`,
+      message: errorMessage(errorCategory(error)),
       title: config.includeTitle ? row?.title ?? null : null,
     }))
   })
@@ -628,6 +700,7 @@ export {
   EVENT_SOURCE,
   MAX_REQUEST_BODY_BYTES,
   MAX_TITLE_LENGTH,
+  NOTICE_EVENT_NAMES,
   PROTOCOL_VERSION,
   clampText,
   clampTitle,

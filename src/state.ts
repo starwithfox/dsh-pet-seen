@@ -514,7 +514,10 @@ export class NoticeStore {
     return {
       sessionId: bucket.sessionId,
       runId: run.runId,
-      reason: last?.kind ?? 'completed',
+      // No reason at all is *not* a success. Every live path settles only when
+      // `last` exists, so this is the defensive branch — and it still must not
+      // claim "completed", which is the one outcome worth never guessing.
+      reason: last?.kind ?? 'unknown',
       targetTurnRef: last === null ? null : String(last.turn),
       completedAt: at,
     }

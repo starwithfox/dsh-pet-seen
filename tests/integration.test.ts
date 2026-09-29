@@ -107,6 +107,7 @@ async function readJson(response: Response): Promise<Record<string, unknown> | n
 interface Harness {
   readonly emitSessionEvent: (session: unknown, event: unknown) => void
   readonly emitAgentStatus: (payload: unknown) => void
+  readonly emitAgentError: (payload: unknown) => void
   readonly controlPort: number
   readonly token: string
   readonly dispose: () => void
@@ -134,6 +135,7 @@ interface Harness {
 async function startPlugin(petPort: number): Promise<Harness> {
   let sessionEvent: Harness['emitSessionEvent'] | null = null
   let agentStatus: Harness['emitAgentStatus'] | null = null
+  let agentError: Harness['emitAgentError'] | null = null
   const disposers: Array<() => void | Promise<void>> = []
   const scratch = mkdtempSync(join(tmpdir(), 'dsh-pet-bridge-integration-'))
   const tokenFile = join(scratch, 'pet-bridge.json')
@@ -148,6 +150,7 @@ async function startPlugin(petPort: number): Promise<Harness> {
     on: (name: string, listener: unknown) => {
       if (name === 'session/event') sessionEvent = listener as Harness['emitSessionEvent']
       if (name === 'agent/status') agentStatus = listener as Harness['emitAgentStatus']
+      if (name === 'agent/error') agentError = listener as Harness['emitAgentError']
       return () => true
     },
     effect: (callback: () => (() => void | Promise<void>) | void) => {
@@ -215,6 +218,10 @@ async function startPlugin(petPort: number): Promise<Harness> {
     get emitAgentStatus() {
       assert.ok(agentStatus !== null, 'agent/status listener captured')
       return agentStatus
+    },
+    get emitAgentError() {
+      assert.ok(agentError !== null, 'agent/error listener captured')
+      return agentError
     },
     controlPort: endpoint.port,
     token: endpoint.token,
@@ -488,6 +495,154 @@ describe('loopback integration', () => {
         afterNotices.some(row => row.sessionId === 'session-C' && row.delivered === false),
         true,
         'the missed completion is still pending in the snapshot',
+      )
+    } finally {
+      harness.dispose()
+    }
+  })
+
+  it('never forwards error text to the pet', async () => {
+    // The claim in README §4.4 is about this exact data path:
+    // `agent/error` -> the message the pet receives. Shape- and length-only
+    // assertions on `buildEvent` cannot see it, which is how the raw string used
+    // to cross the wire.
+    const harness = await startPlugin(pet.port)
+    try {
+      await controlPost(harness.controlPort, '/hello', {
+        v: PROTOCOL_VERSION,
+        port: pet.port,
+        token: harness.token,
+      })
+
+      const before = pet.received.length
+      const session = { id: 'session-err', header: {} }
+      const secret = 'the user asked about hunter2'
+      harness.emitAgentError({
+        agent: { session, status: 'idle' },
+        error: { code: 'ECONNRESET', message: `${secret} / C:\\Users\\star_fox\\private\\notes.md` },
+      })
+
+      await waitFor(
+        () => pet.received.slice(before).some(event => event.hook === 'agent/error'),
+        'the agent/error report',
+      )
+      const pushed = pet.received.slice(before)
+      const report = pushed.find(event => event.hook === 'agent/error')
+      assert.ok(report !== undefined)
+
+      // Only the whitelisted category crosses, and it is a closed set.
+      assert.equal(report.message, '运行出错：网络连接失败')
+      const serialized = JSON.stringify(pushed)
+      assert.equal(serialized.includes('hunter2'), false, 'a restated prompt never crossed')
+      assert.equal(serialized.includes('notes.md'), false, 'a local path never crossed')
+      assert.equal(serialized.includes('ECONNRESET'), false, 'the raw code never crossed')
+      assert.equal(serialized.includes('private'), false)
+      // A failure during the run is not a result: nothing for the pet to pop.
+      assert.equal(report.noticeId, undefined, 'a running failure carries no notice')
+    } finally {
+      harness.dispose()
+    }
+  })
+
+  it('reports a settled error as an error event with a notice', async () => {
+    const harness = await startPlugin(pet.port)
+    try {
+      await controlPost(harness.controlPort, '/hello', {
+        v: PROTOCOL_VERSION,
+        port: pet.port,
+        token: harness.token,
+      })
+
+      const before = pet.received.length
+      const session = { id: 'session-failed', header: {} }
+      const now = Date.now()
+      harness.emitAgentStatus({ agent: { session, status: 'running' }, status: 'running' })
+      harness.emitSessionEvent(session, {
+        type: 'turn/end',
+        seq: 1,
+        time: now,
+        data: { turn: 7, reason: { kind: 'error', error: { code: 'UNKNOWN', message: 'kaboom' } } },
+      })
+      harness.emitAgentStatus({ agent: { session, status: 'idle' }, status: 'idle' })
+
+      await waitFor(
+        () => pet.received.slice(before).some(event => event.sessionId === 'session-failed'),
+        'the settled run to be reported',
+      )
+      const pushed = pet.received.slice(before).filter(event => event.sessionId === 'session-failed')
+      // A failed run is never announced as a completion.
+      assert.equal(pushed.some(event => event.event === 'completed'), false, 'no completed event')
+      const result = pushed.find(event => event.event === 'error')
+      assert.ok(result !== undefined, 'the result event is named error')
+      assert.equal(result.reason, 'error')
+      assert.equal(result.targetTurnRef, '7')
+      assert.equal(typeof result.noticeId, 'string', 'a failed run still mints a notice')
+      assert.equal(JSON.stringify(pushed).includes('kaboom'), false, 'the failure text never crossed')
+
+      const state = await controlGet(harness.controlPort, '/state', harness.token)
+      const notices = state.body?.notices as Array<Record<string, unknown>>
+      const stored = notices.find(row => row.noticeId === result.noticeId)
+      assert.ok(stored !== undefined, 'the notice is retained for alignment')
+      assert.equal(stored.reason, 'error')
+    } finally {
+      harness.dispose()
+    }
+  })
+
+  it('treats aborted and unrecognized reasons as non-completions', async () => {
+    const harness = await startPlugin(pet.port)
+    try {
+      await controlPost(harness.controlPort, '/hello', {
+        v: PROTOCOL_VERSION,
+        port: pet.port,
+        token: harness.token,
+      })
+
+      const before = pet.received.length
+      const now = Date.now()
+      const stopped = { id: 'session-aborted', header: {} }
+      const alien = { id: 'session-alien', header: {} }
+      harness.emitAgentStatus({ agent: { session: stopped, status: 'running' }, status: 'running' })
+      harness.emitSessionEvent(stopped, {
+        type: 'turn/end',
+        seq: 1,
+        time: now,
+        data: { turn: 3, reason: { kind: 'aborted', reason: { kind: 'user' } } },
+      })
+      harness.emitAgentStatus({ agent: { session: stopped, status: 'idle' }, status: 'idle' })
+      // A kind no DSH version ships yet: it must not be read as success.
+      harness.emitAgentStatus({ agent: { session: alien, status: 'running' }, status: 'running' })
+      harness.emitSessionEvent(alien, {
+        type: 'turn/end',
+        seq: 1,
+        time: now,
+        data: { turn: 9, reason: { kind: 'timeout' } },
+      })
+      harness.emitAgentStatus({ agent: { session: alien, status: 'idle' }, status: 'idle' })
+
+      await waitFor(
+        () => ['session-aborted', 'session-alien'].every(id =>
+          pet.received.slice(before).some(event => event.sessionId === id && event.event === 'idle')),
+        'both non-completions to be reported as idle',
+      )
+      const pushed = pet.received.slice(before).filter(event =>
+        event.sessionId === 'session-aborted' || event.sessionId === 'session-alien')
+      assert.equal(pushed.some(event => event.event === 'completed'), false, 'nothing claimed success')
+      for (const event of pushed.filter(row => row.event === 'idle')) {
+        assert.equal(event.noticeId, undefined, 'a non-completion mints no notice')
+      }
+      assert.equal(
+        pushed.some(event => event.reason === 'unknown'),
+        true,
+        'the unrecognized reason is reported as unknown, not completed',
+      )
+
+      const state = await controlGet(harness.controlPort, '/state', harness.token)
+      const notices = state.body?.notices as Array<Record<string, unknown>>
+      assert.equal(
+        notices.some(row => row.sessionId === 'session-aborted' || row.sessionId === 'session-alien'),
+        false,
+        'no notice exists for a run that did not complete',
       )
     } finally {
       harness.dispose()

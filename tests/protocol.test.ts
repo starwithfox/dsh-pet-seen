@@ -12,9 +12,11 @@ const {
   DEFAULT_CONTROL_PORT,
   DEFAULT_PET_PORT,
   MAX_TITLE_LENGTH,
+  NOTICE_EVENT_NAMES,
   PROTOCOL_VERSION,
   clampText,
   clampTitle,
+  completionDispatch,
   isLoopbackHost,
   isPort,
   isSameOriginLoopback,
@@ -122,5 +124,39 @@ describe('text bounds', () => {
     assert.equal(bounded?.length, MAX_TITLE_LENGTH)
     assert.equal(clampTitle('short'), 'short')
     assert.equal(clampTitle(null), undefined)
+  })
+})
+
+describe('settled-run event mapping', () => {
+  // Listed by hand on purpose. Adding a kind to `TurnEndKind` should force a
+  // decision here, and the assertions below then fail until the mapping in
+  // `completionDispatch` agrees with the documented `NOTICE_EVENT_NAMES`.
+  const kinds = [
+    'completed',
+    'max-tokens',
+    'error',
+    'blocked',
+    'aborted',
+    'interrupted',
+    'unknown',
+  ] as const
+
+  it('carries a notice exactly when the event is a notice event', () => {
+    for (const kind of kinds) {
+      const dispatch = completionDispatch(kind)
+      assert.equal(
+        NOTICE_EVENT_NAMES.includes(dispatch.event),
+        dispatch.notice,
+        `${kind} -> ${dispatch.event} must be a notice event if and only if it mints a notice`,
+      )
+    }
+  })
+
+  it('never announces a non-completion as a result', () => {
+    for (const kind of ['aborted', 'interrupted', 'unknown'] as const) {
+      const dispatch = completionDispatch(kind)
+      assert.equal(dispatch.notice, false, `${kind} must not mint a notice`)
+      assert.equal(dispatch.event, 'idle', `${kind} must not be announced as a result`)
+    }
   })
 })

@@ -152,12 +152,26 @@ dsh plugin add --profile web file:C:\Users\star_fox\.dsh\source\deepseek-harness
 
 归一化事件：`idle` / `running` / `completed` / `error` / `notice/seen` / `session/removed`。
 
-**"看到即取消"的三种情况**：
+**运行结算成哪个事件**（与 `src/index.ts` 的 `completionDispatch` 同源）：
+
+| 结束原因 `reason` | 事件名 | 铸 `noticeId`？ |
+| --- | --- | --- |
+| `completed` | `completed` | 是 |
+| `max-tokens` | `completed`（文案另写，不写成正常完成） | 是 |
+| `error` / `blocked` | `error` | 是 |
+| `aborted` / `interrupted` | `idle` | **否** —— 不算完成，不弹 |
+| `unknown`（reason 缺失 / 畸形 / DSH 新增的 kind） | `idle` | **否** —— 不猜成功 |
+
+只有 `completed` 与 `error` 能携带 `noticeId`，这两种才叫**结果事件**。
+`error` 兼作运行中的失败上报（`tool/result`、`agent/error`），那时**没有** `noticeId`。
+所以桌宠的判据是「有 `noticeId` 才算结果」，**不是**「名字叫 `error` 就算结果」。
+
+**"看到即取消"的三种情况**（下表的"结果事件"= 带 `noticeId` 的 `completed` 或 `error`）：
 
 | 情况 | 插件发的 | 桌宠做的 |
 | --- | --- | --- |
-| 发完成事件前已收到**本次通知**的 L3 观察 | `completed` 带 `seen: true` | **不弹**，记录已读 |
-| 发完成事件时还没有 L3 观察 | `completed` 带 `seen: false` | 弹提示，记住 `noticeId` |
+| 发结果事件前已收到**本次通知**的 L3 观察 | 结果事件带 `seen: true` | **不弹**，记录已读 |
+| 发结果事件时还没有 L3 观察 | 结果事件带 `seen: false` | 弹提示，记住 `noticeId` |
 | 提示已弹，之后用户才看到 | 补发 `notice/seen` 带同一 `noticeId` | **按 `noticeId` 取消那条提示** |
 
 桌宠按事件 `id` 去重、按 `noticeId` 建/取消提示。
@@ -206,6 +220,20 @@ v1 **只发**：事件名、`sessionId`、会话标题（可关、截断 160）�
 **不发**：prompt 全文、assistant 消息、工具参数原文、工具结果、`todo/write` 文本、凭据、请求体。
 工具结果失败只发通用类别，不发错误正文——错误文本可能复述用户输入。
 
+失败只以**封闭类别白名单**过线（`src/index.ts` 的 `ErrorCategory`）：
+
+| 类别 | 上报文案 |
+| --- | --- |
+| `network` | 运行出错：网络连接失败 |
+| `auth` | 运行出错：认证失败 |
+| `rate-limit` | 运行出错：请求过于频繁 |
+| `aborted` | 运行已中止 |
+| `unknown` | 运行出错 |
+
+`error.code` 只被用来**分类**（正则匹配标记），原文、`error.message`、原始字符串**一律不过线**，
+连截断后的形式也不发。桌宠侧认不出的 `reason` 也一律给中性文案（`运行结束`），
+不写成「任务完成」。
+
 > 截断是显示上界，**不是**隐私边界。字段白名单才是：
 > 敏感内容在协议里根本没有能承载它的字段。测试 `buildEvent: the privacy boundary`
 > 锁住了这一点。
@@ -226,7 +254,7 @@ v1 **只发**：事件名、`sessionId`、会话标题（可关、截断 160）�
 
 ```powershell
 npm run typecheck     # 对着本机运行中的 DSH 类型检查（见下）
-npm test              # 编译测试 + 151 个单测/集成测试
+npm test              # 编译测试 + 157 个单测/集成测试
 npm run build         # 两个 bundle
 npm run smoke:bundle  # 加载真实产物，校验 bundle 纯净性与 manifest
 npm run roundtrip     # 离线跑通全链路（不碰运行中的 DSH）
@@ -258,14 +286,32 @@ npm run check         # 以上全部
 （profile 的 `node_modules` 已经提供）。`@deepseek-ai/dsh-session`、
 `dsh-agent`、`cordis` **只做类型引用**，`smoke:bundle` 会断言它们不在产物里。
 
-harness 的结构化面在 `src/index.ts` 里用 `SessionFace` / `AgentFace` 声明，
-并有编译期断言：
+harness 的结构化面集中在 **`src/pins.ts`** —— 这是唯一引用 DSH 内部类型的模块
+（`SessionFace` / `AgentFace` / `SessionEventFace` + 锚点 + 机制）。`src/index.ts`
+只 type-import 它并 re-export faces，自身不含任何 `@deepseek-ai/dsh-*` 引用；
+把插件抽出来给别人用时，要对照宿主版本改的也只有这一个文件。
+
+锚点必须是**会因约束不满足而失败**的形式：
 
 ```ts
-type _SessionPinned = import('@deepseek-ai/dsh-session').Session extends SessionFace ? true : never
+export type Assert<T extends true> = T
+export type Satisfies<Actual, Face> = Actual extends Face ? true : false
+type _SessionPinned = Assert<Satisfies<import('@deepseek-ai/dsh-session').Session, SessionFace>>
 ```
 
-形状漂移会在 `npm run typecheck` 失败，而不是在用户会话的凌晨三点失败。
+反例（曾经用过、**无效**）：`X extends Face ? true : never` 求值为 `never` 不产生任何编译错误，
+别名还没人读，于是漂移静默通过 `npm run typecheck`。
+现在 `Assert` 的约束在实例化处即被检查；另有 `_ReasonsCovered` 锚住 `turn/end` 的 reason 全集。
+
+**机制与测试必须共用同一份定义。** 这两个类型是 `export` 的，`tests/pins.test.ts`
+经 `tests/harness.ts` 引用**生产**的 `Assert`/`Satisfies` 来构造负例。
+测试若自己再声明一份副本，就拦不住"生产锚点被改回失效形式"这条回退 —— 那是它唯一的存在理由。
+因此该测试能同时抓住三种回退：`Assert` 失去约束、`Satisfies` 变回 `? true : never`
+（负例成为 `Assert<never>`，而 `never` 满足任意约束）、`Satisfies` 条件被改成恒真；
+`_PinCount` / `_PinsHold` 另外断言锚点**清单**，防止锚点被删除而非弱化。
+
+形状漂移会在 `npm run typecheck` 失败，而不是在用户会话的凌晨三点失败
+（这是刻意的：DSH 升级新增结束原因时，宁可构建失败，也不能让它被降级成"任务完成"）。
 
 ### 浏览器侧 bundle 纯净性
 
@@ -290,6 +336,7 @@ dsh-plugin/
 ├── tsconfig.types.json   # Harness-free 基线
 ├── src/
 │   ├── index.ts          # apply(ctx, config)：订阅、控制服务、推送、可选浏览器路由
+│   ├── pins.ts           # 唯一引用 DSH 内部类型的模块：faces + 编译期锚点 + 其机制
 │   ├── protocol.ts       # 三方共享的协议事实源（无 node: 依赖，浏览器侧也 import）
 │   ├── state.ts          # SessionProgress / Notice 表 + 运行结束聚合（纯函数）
 │   ├── pet-client.ts     # 向桌宠 POST（超时/串行队列/abort）
@@ -301,6 +348,7 @@ dsh-plugin/
 ├── tests/
 │   ├── state.test.ts
 │   ├── protocol.test.ts
+│   ├── pins.test.ts          # 负向类型测试：引用生产机制，证明锚点真的会失败
 │   ├── credentials.test.ts   # 手递文件只在「指定端口」时才发布（port 0 不得覆盖活桥接）
 │   ├── integration.test.ts   # 真 loopback：控制服务 + 推送 + /state 对齐
 │   ├── visibility.test.ts    # D1 取行规则 + L1/L2/L3 阶梯
