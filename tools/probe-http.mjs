@@ -38,7 +38,7 @@
 import { readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { buildSessionCookie, readSessionSecret, splitCookie } from './browser-auth.mjs'
+import { buildSessionCookie, readSessionSecret, resolvePetClientUrl, splitCookie } from './browser-auth.mjs'
 
 const args = process.argv.slice(2)
 const WEB_ONLY = args.includes('--web-only')
@@ -104,12 +104,14 @@ for (const asset of referenced) {
 }
 
 console.log('\n=== gate: the pet plugin client bundle the boot payload names ===')
-const rev = /\/plugins\/\?\?dsh-pet-bridge\/client\.js&rev=([\w.-]+)/.exec(html)?.[1]
-if (rev === undefined) {
+// Which URL serves the bundle, and why the boot JSON entry is the authority rather than the
+// shared `<script src>` group, lives in `resolvePetClientUrl` (tools/browser-auth.mjs).
+const clientPath = resolvePetClientUrl(html, referenced)
+if (clientPath === undefined) {
   failures += 1
   console.log('  !! dsh-pet-bridge is not in the boot payload: the plugin is not loaded for this profile')
 } else {
-  const result = await fetchPath(`dsh-pet-bridge/client.js (rev ${rev})`, `/plugins/??dsh-pet-bridge/client.js&rev=${rev}`, { headers: { cookie } })
+  const result = await fetchPath(`dsh-pet-bridge/client.js (${clientPath})`, clientPath, { headers: { cookie } })
   if (!result.ok) failures += 1
 }
 

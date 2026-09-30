@@ -115,3 +115,37 @@ export function splitCookie(cookie) {
   if (separator <= 0) throw new Error(`not a cookie pair: ${cookie.slice(0, 40)}`)
   return { name: cookie.slice(0, separator), value: cookie.slice(separator + 1) }
 }
+
+/**
+ * Resolve the URL that serves the pet plugin's own client bundle, from an app shell.
+ *
+ * Two shapes in the shell carry the plugin roster, and on the 0.2.0-rc.2 desktop shell they
+ * disagree in *both* shape and `rev` (measured 2026-09-30; `working-docs/
+ * DESKTOP-PROBE-2026-09-30.md` §5):
+ *
+ *   boot JSON roster    {"id":"dsh-pet-bridge","url":"plugins/??dsh-pet-bridge/client.js&rev=…",…}
+ *                       → the plugin stands alone, so this URL serves its own bundle
+ *   inline `<script src>`  plugins/??@deepseek-ai/…,dsh-pet-bridge/client.js&amp;rev=…
+ *                       → one of 65 packages, escaped, and that group rev does NOT resolve to a
+ *                         single-file path (fetching it 404s)
+ *
+ * `rev` is therefore a routing key, not a cache-buster: only the exact published rev serves
+ * bytes. The result must be a URL the shell actually names, never a reconstruction, and it must
+ * be the *standalone* shape — handing over a group URL would 404 and turn a healthy host into a
+ * false red. A position-free `plugins/??…` scan cannot do this: `@deepseek-ai/` contains a
+ * slash, so no bounded pattern can tell a same-group sibling (`…/a/client.js`) from the next
+ * attribute (`"url":"…"`). Hence `scriptUrls` (already `&amp;`-decoded) is passed in rather than
+ * re-scanned here.
+ *
+ * @param html - the authenticated app shell.
+ * @param scriptUrls - the shell's own decoded script/link references.
+ * @returns the resolvable client URL, or `undefined` when the plugin is not in this profile.
+ */
+export function resolvePetClientUrl(html, scriptUrls = []) {
+  const isStandalone = (candidate) =>
+    candidate !== undefined
+    && /(?:^|\/)plugins\/\?\?dsh-pet-bridge\/client\.js[&"'\s]/.test(candidate)
+  const fromBootJson = /"id"\s*:\s*"dsh-pet-bridge"[^}]*?"url"\s*:\s*"([^"]+)"/.exec(html)?.[1]
+  const fromScript = scriptUrls.find((url) => url.includes('dsh-pet-bridge/client.js'))
+  return [fromBootJson, fromScript].find(isStandalone)
+}
