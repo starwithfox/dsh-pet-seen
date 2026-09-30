@@ -6,7 +6,28 @@ DSH 插件：把 Harness 的任务状态推给本机桌宠，并把"**用户确�
 这是桌宠项目的 "DSH 侧一半"。另一半（桌宠接收端）在 `pet.py`，按本文协议对接。
 
 > 设计依据与取舍：仓库根目录 `DESIGN-dsh-pet-plugin.md`。
-> 不含过程文档：轮次交付说明、交接记录与实现计划仅在本地保留，不随仓库发布。
+> **下面所有 `working-docs/…` 路径都只在开发者的本地 checkout 里存在**——`working-docs/` 与 `archive/`
+> 不随仓库发布；引用它们是为了给出可核对的记录位置，正文结论已在本文写全。
+> **当前状态与下一步：`working-docs/STATUS.md`（唯一入口）**——一眼看清"探到哪了、还差什么、按什么顺序做"。
+> 成熟度评估与安装/分发建议：`working-docs/PLUGIN-MATURITY.md`（平台层"谁有权装"、项目层可分发清单、
+> 运维层共存与生效语义；含一条新增发现：宿主兼容性闸门因未声明 `@deepseek-ai/dsh*` peer 而**空转**）。
+> 过程文档保存在 `working-docs/`，旧轮次记录保存在 `archive/`。
+> 桌面端（Electron 应用）实测：`working-docs/DESKTOP-PROBE-2026-09-30.md`（权威记录）与
+> `working-docs/DESKTOP-COMPAT-FINDINGS.md`（已冻结的历史证据）。要点：桌面应用 boot 的是
+> **`desktop` profile**，**不共享** `web` profile 的 `node_modules`（`DESKTOP-COMPAT-FINDINGS.md` §1
+> 记录的"`:19387` 上 `/pet-bridge/*` 为 `404`"是**安装前**的状态；现插件已装入 `desktop` profile）；
+> 两个宿主会抢控制端口，**同一时刻只跑一个**（该文档 §4）。
+> 桌面容器把页面 origin 改成 `dsh-app://app` 并在转发时剥掉 `Origin`；**实测那条转发是通的**
+> （桌面渲染进程内 `POST /pet-bridge/visibility` 全程 `200`），所以浏览器半边**不是**因容器而失效。
+> **"要真正支持桌面端该怎么做"已实测出结论**：宿主侧全通，但页面侧 L3 在 **0.2.0-rc.2 上必然失效**——
+> 0.2.0 从 `sessions.list` 快照里删掉了 `current`（0.1.5-rc.2 有），客户端因此永远拿不到当前会话，
+> **连一次 `GET /pet-bridge/notices` 都不会发**，也就永远不会 `/seen`、永远不撤销桌宠提示。
+> **它不是桌面端独有的问题**：`:19387` 对外提供的那份前端同样没有该字段，普通浏览器打开会一样失效。
+> 见 `working-docs/DESKTOP-PROBE-2026-09-30.md` §3.3、§6.1。
+> **修复设计与双支持决策已出**（仍**未实施**）：`working-docs/FIX-DESIGN-SESSION-CURRENT-2026-09-30.md`
+> ——首选读法改为 `uiSession.adapter.current`（0.1.5/0.2.0 都有且同形，一条路径双支持），
+> 支持范围建议 `"^0.1.5-rc.2 || ^0.2.0-rc.2"`；判据是 `/pet-bridge/notices` 请求次数 > 0 且 `seenAt` 被写入。
+> 因此**在修复落地前`README` 描述的能力在 0.2.0 宿主上不成立**；状态与顺序见 `working-docs/STATUS.md`。
 
 ---
 
@@ -107,6 +128,22 @@ dsh plugin add --profile web file:C:\Users\star_fox\.dsh\source\deepseek-harness
 > `dsh plugin` 只是 pnpm 的一层封装：`add` 不会热加载已运行的宿主。
 > 开发时可用 `dsh plugin add --profile web link:<绝对路径>` 建软链，改完重建 + 重启即可。
 
+> **另一条路：应用内侧栏 Plugins 页**（产品入口，不必退出宿主）。目标填本目录的**绝对路径**；
+> 装完**必须点「立即启用」**——只装不启用时 profile 的 `dsh.profile.bundles` 里没有它，宿主不会加载
+> （页面原文："直接关闭则让它保持已安装但关闭"；"安装成功不代表模块一定能够激活"）。
+> 它把本地目录记成 **`link:`（Junction 软链）**，与 CLI `file:` 的实体拷贝语义不同：
+> `link:` 下改源码不需要重装（但已加载的 JS 模块世代仍要重启才替换），`file:` 下改源码根本不生效。
+> **实测（2026-09-30，桌面应用 `0.2.0-rc.2` / `desktop` profile）：走界面装完免重启即加载**，
+> `:19387/pet-bridge/notices` 由 `404` → `200`、`:17323` 当场归属桌面宿主。
+> 步骤、判定表与证据边界见 `working-docs/DESKTOP-PROBE-2026-09-30.md`。
+
+> **profile 归属（易踩）**：浏览器 UI 与 CLI 用 `web` profile（配套运行时 **0.1.5-rc.2**）；
+> DSH **桌面应用** boot 的是 `desktop` profile（`~/.dsh/profiles/desktop`，配套运行时 **0.2.0-rc.2**），
+> 两者**不共享** `node_modules`，所以上面这条命令只让浏览器端起效。
+> **"往 `desktop` 再装一份是否就够"已实测**：宿主侧够（免重启加载、链路全通），
+> 但页面侧在 0.2.0 上**不够**——见 `working-docs/DESKTOP-PROBE-2026-09-30.md` §3.3、§6.1。
+> 另外两个宿主会抢控制端口 `17323`，**同一时刻只跑一个宿主**——共存的半残行为见该文档 §4。
+
 ### 配置
 
 `dsh-plugin/cordis.patch.yml` 的 `config` 段：
@@ -124,6 +161,9 @@ dsh plugin add --profile web file:C:\Users\star_fox\.dsh\source\deepseek-harness
 | `includeTitle` | `true` | 是否把会话标题发给桌宠（标题含用户输入） |
 
 同一个 DSH 进程跑两个实例时**必须**改 `controlPort`（端口是固定监听）。
+两个**宿主进程**（例如 `web` 与桌面应用）同时跑同理，而且改端口也救不了：凭据文件
+`~/.dsh/pet-bridge.json` 是全局单文件，桌宠只读它，一次只能连一个宿主
+（`working-docs/DESKTOP-COMPAT-FINDINGS.md` §4）。
 
 ---
 
@@ -254,7 +294,7 @@ v1 **只发**：事件名、`sessionId`、会话标题（可关、截断 160）�
 
 ```powershell
 npm run typecheck     # 对着本机运行中的 DSH 类型检查（见下）
-npm test              # 编译测试 + 157 个单测/集成测试
+npm test              # 编译测试 + 跑全部单测/集成测试（末行打印实测条数）
 npm run build         # 两个 bundle
 npm run smoke:bundle  # 加载真实产物，校验 bundle 纯净性与 manifest
 npm run roundtrip     # 离线跑通全链路（不碰运行中的 DSH）
