@@ -4,8 +4,7 @@
  * `index.ts` is the wiring: it owns listeners, timers and requests. Everything
  * it has to *decide* lives here, as a pure function of values it already holds,
  * so the browser suite can drive the shipping logic instead of a copy of its
- * rules. The three decisions encoded here are the three defects this round
- * fixes:
+ * rules. The decisions encoded here are the defects this round fixes:
  *
  * - **which notice to watch** — the oldest *visible* one, never letting a
  *   notice that is scrolled out of view block a newer one that is on screen
@@ -13,7 +12,10 @@
  * - **whether a refused report may be retried** — a transient refusal must not
  *   blacklist a notice forever, while a terminal one must stop the retry loop
  *   (D4);
- * - **what a report response means** — accepted, refused-for-now, or finished.
+ * - **what a report response means** — accepted, refused-for-now, or finished;
+ * - **which session the user is looking at** — one ordered chain over the four
+ *   places 0.1.5 and 0.2.0 keep it, taking the first non-empty answer, so a
+ *   runtime which moves it again degrades instead of going blind.
  *
  * @module dsh-pet-bridge/client/decide
  */
@@ -196,4 +198,193 @@ export function createAttemptGate(cooldownMs: number): AttemptGate {
  */
 export function resolveDwellMs(value: unknown, fallbackMs: number): number {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : fallbackMs
+}
+
+/* -------------------------------------------------------------------------- *
+ * Which session the user is looking at
+ *
+ * 0.2.0 moved this answer: `sessions.list.current` is gone from its snapshot and
+ * the current session now lives on the `uiSession` service. The chain below is
+ * the whole compatibility story — there is no version sniffing anywhere, only
+ * "which read answers on this runtime" — and `reader` is what makes a future
+ * move visible instead of silent.
+ * -------------------------------------------------------------------------- */
+
+/**
+ * A host-provided value source.
+ *
+ * Both runtimes hand the current-session binding out in this shape
+ * (`HostObservable` in `@deepseek-ai/dsh-client-ui-slots`), and both return an
+ * unsubscribe function from `subscribe`.
+ */
+export interface ObservableView<T> {
+  getSnapshot(): T
+  subscribe?(listener: () => void): () => void
+}
+
+/** A session binding; `key` is undefined when there is no current session. */
+export interface SessionBindingLike {
+  key?: string
+}
+
+/**
+ * The slice of the client `uiSession` service this half reads.
+ *
+ * `adapter.current` is the public face on **both** versions; `current` is the
+ * alias 0.2.0 added for the same object. Neither is declared in `inject`, so a
+ * runtime that renames or drops the service only costs us the watch ladder
+ * (see `index.ts`), never the client half itself.
+ */
+export interface UiSessionFace {
+  adapter?: { current?: ObservableView<SessionBindingLike> }
+  current?: ObservableView<SessionBindingLike>
+}
+
+/** One `sessions.list` row, widened to the 0.2.0 shape. */
+export interface SessionRow {
+  title?: string
+  running?: boolean
+  origin?: 'subagent'
+  /** Retention counters; `mainView > 0` means the main view is showing it. */
+  retainedBy?: { mainView?: number }
+}
+
+/** The `sessions.list` snapshot both runtimes hand out. */
+export interface SessionsListSnapshot {
+  /** Present on 0.1.5, absent on 0.2.0. */
+  current?: string | null
+  byId: Record<string, SessionRow | undefined>
+}
+
+/** The client `sessions` service slice this plugin reads. */
+export interface SessionsFace {
+  list: { getSnapshot(): SessionsListSnapshot }
+}
+
+/** Which read in the chain produced the session id; `-1` when none did. */
+export type SessionReaderIndex = 0 | 1 | 2 | 3 | -1
+
+/** The current session as this page sees it. */
+export interface ResolvedCurrentSession {
+  readonly sessionId: string | null
+  readonly title: string | null
+  /** Hit index of the read that answered; the drift signal to report upstream. */
+  readonly reader: SessionReaderIndex
+}
+
+/** Everything the chain may read; both fields tolerate absence. */
+export interface CurrentSessionSource {
+  /** Result of `ctx.get('uiSession')`, or undefined when it is absent. */
+  readonly uiSession?: unknown
+  readonly sessions?: SessionsFace
+}
+
+/** A non-empty string, or null. */
+function nonEmptyString(value: unknown): string | null {
+  return typeof value === 'string' && value !== '' ? value : null
+}
+
+/**
+ * Read the session id out of an observable binding.
+ *
+ * @param read - thunk returning the observable. It is called inside the guard
+ *   because reaching the observable is itself a read that may throw (the
+ *   services are proxies and a torn-down fiber can leave a getter behind).
+ * @returns the binding's `key`, or null when the source is missing, malformed,
+ *   or throws.
+ */
+function bindingKey(read: () => unknown): string | null {
+  try {
+    const view = read()
+    if (typeof view !== 'object' || view === null) return null
+    const snapshot = (view as ObservableView<unknown>).getSnapshot()
+    if (typeof snapshot !== 'object' || snapshot === null) return null
+    return nonEmptyString((snapshot as SessionBindingLike).key)
+  } catch {
+    return null
+  }
+}
+
+/** Take the `sessions.list` snapshot once, or null when it cannot be read. */
+function sessionList(sessions: SessionsFace | undefined): SessionsListSnapshot | null {
+  try {
+    const snapshot = sessions?.list.getSnapshot()
+    return typeof snapshot === 'object' && snapshot !== null ? snapshot : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * The id of the first row the main view retains.
+ *
+ * This is the read the product itself uses (`ui-session` and `ui-layout`), so
+ * the order is the host's own `byId` key order rather than one we invent.
+ *
+ * @param list - the `sessions.list` snapshot, if it could be read.
+ * @returns that row's id, or null.
+ */
+function retainedSessionId(list: SessionsListSnapshot | null): string | null {
+  try {
+    for (const [id, row] of Object.entries(list?.byId ?? {})) {
+      if ((row?.retainedBy?.mainView ?? 0) > 0) return nonEmptyString(id)
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
+/** The title of a resolved session, taken from the same snapshot as its id. */
+function sessionTitle(list: SessionsListSnapshot | null, sessionId: string): string | null {
+  try {
+    const title = list?.byId[sessionId]?.title
+    return typeof title === 'string' ? title : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Find the session the user is looking at.
+ *
+ * Reads are tried in order and the first non-empty id wins, so a runtime that
+ * loses one source degrades to the next instead of going blind:
+ *
+ * | `reader` | read | 0.1.5 | 0.2.0 |
+ * | --- | --- | --- | --- |
+ * | 0 | `uiSession.adapter.current.getSnapshot().key` | yes | yes |
+ * | 1 | `uiSession.current.getSnapshot().key` | — | yes |
+ * | 2 | `sessions.list.getSnapshot().current` | yes | — |
+ * | 3 | the `byId` row with `retainedBy.mainView > 0` | — | yes |
+ *
+ * Every read is guarded on its own, so a throwing source costs one step rather
+ * than the whole chain. Nothing here throws, and nothing here subscribes: this
+ * function only answers "which session", the caller owns observation.
+ *
+ * @param source - the `uiSession` value and the `sessions` service.
+ * @returns the session id, its title, and which read found it (`-1` if none).
+ */
+export function resolveCurrentSession(source: CurrentSessionSource): ResolvedCurrentSession {
+  const ui = source.uiSession as UiSessionFace | undefined
+  // One snapshot serves the `current` read, the `retainedBy` fallback and the
+  // title, so an id and its title can never come from different revisions.
+  const list = sessionList(source.sessions)
+  const readers: ReadonlyArray<readonly [SessionReaderIndex, () => string | null]> = [
+    // 0: the public face both runtimes expose.
+    [0, () => bindingKey(() => ui?.adapter?.current)],
+    // 1: 0.2.0's alias for the same object; survives `adapter` being renamed.
+    [1, () => bindingKey(() => ui?.current)],
+    // 2: the pre-0.2 read, kept as the fallback 0.1.5 answers with.
+    [2, () => nonEmptyString(list?.current)],
+    // 3: last resort, and the read the host's own UI uses.
+    [3, () => retainedSessionId(list)],
+  ]
+  for (const [reader, read] of readers) {
+    const sessionId = read()
+    if (sessionId !== null) {
+      return { sessionId, title: sessionTitle(list, sessionId), reader }
+    }
+  }
+  return { sessionId: null, title: null, reader: -1 }
 }

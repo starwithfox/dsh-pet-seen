@@ -7,8 +7,9 @@
  *
  * What it does:
  *
- * 1. Learns the session the user is actually looking at from the client
- *    `sessions` service, and keeps the host's per-tab focus lease fresh.
+ * 1. Learns the session the user is actually looking at — `uiSession` when the
+ *    runtime has it, the `sessions` service as the fallback — and keeps the
+ *    host's per-tab focus lease fresh.
  * 2. Asks the host which notices are still unconfirmed for that session.
  * 3. Watches the finished turn through the L1→L3 ladder in `visibility.ts`, and
  *    reports `/seen` only when L3 holds — refreshing the focus lease first, so a
@@ -25,29 +26,33 @@ import type { NoticesPayload, PendingNotice, SeenResponse } from '../protocol.js
 import {
   classifySeenOutcome,
   createAttemptGate,
+  resolveCurrentSession,
   resolveDwellMs,
   selectWatchTarget,
   watchableCandidates,
 } from './decide.js'
+import type { ResolvedCurrentSession, SessionsFace } from './decide.js'
 import { VisibilityTracker, createVisibilityDeps } from './visibility.js'
 
 /** Services this half needs. These are runtime package names, not values. */
 export const inject = ['sessions', 'connection']
 
-/** The client `sessions` service slice this plugin reads. */
-export interface SessionsFace {
-  list: {
-    getSnapshot(): {
-      /** Currently selected session id, or null/undefined when none. */
-      current?: string | null
-      byId: Record<string, { title?: string, running?: boolean, origin?: 'subagent' } | undefined>
-    }
-  }
-}
+/**
+ * The service faces this half reads are declared next to the decisions that use
+ * them (`decide.ts`), so the pure chain and the wiring cannot drift apart.
+ */
+export type { SessionsFace }
 
-/** Context capabilities this half uses. */
+/**
+ * Context capabilities this half uses.
+ *
+ * `get` is cordis' reflective service lookup. `uiSession` is deliberately **not**
+ * in `inject`: a runtime that lacks or renames it must only cost us the watch
+ * ladder, never the whole client half (no lease, no visibility reporting).
+ */
 export interface ClientContext {
   sessions: SessionsFace
+  get?: (name: string) => unknown
   effect: (callback: () => (() => void | Promise<void>) | void) => unknown
   logger?: { info?: (message: string) => void, warn?: (message: string) => void }
 }
@@ -188,14 +193,35 @@ export function apply(ctx: ClientContext): void {
   let currentSessionId: string | null = null
   let disposed = false
 
-  const snapshot = (): { sessionId: string | null, title: string | null } => {
+  /**
+   * Read `uiSession` reflectively, on every call.
+   *
+   * Not captured at `apply()` time and not in `inject`, because the service may
+   * arrive late, be replaced by a reload, or never exist — and all three have to
+   * mean "no current session", not "this half failed to start".
+   */
+  const readUiSession = (): unknown => {
     try {
-      const state = ctx.sessions.list.getSnapshot()
-      const sessionId = typeof state.current === 'string' && state.current !== '' ? state.current : null
-      const title = sessionId === null ? null : (state.byId[sessionId]?.title ?? null)
-      return { sessionId, title }
+      // Called as a method of `ctx` on purpose: the context is a proxy and `get`
+      // is mixed in from `reflect`, so an unbound reference loses its receiver.
+      return ctx.get?.('uiSession')
     } catch {
-      return { sessionId: null, title: null }
+      return undefined
+    }
+  }
+
+  /**
+   * The session the user is looking at, its title, and which read found it.
+   *
+   * `reader` is carried through for the drift self-check; nothing consumes it
+   * yet, and a failure here is an ordinary "no current session" (invariant: the
+   * page never breaks because of this plugin).
+   */
+  const snapshot = (): ResolvedCurrentSession => {
+    try {
+      return resolveCurrentSession({ uiSession: readUiSession(), sessions: ctx.sessions })
+    } catch {
+      return { sessionId: null, title: null, reader: -1 }
     }
   }
 

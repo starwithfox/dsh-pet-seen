@@ -5,7 +5,8 @@
  * defects of this round live here: picking a watch target that is not blocked
  * by an off-screen older notice (D3), treating a transient refusal as
  * retryable rather than as a lifetime ban (D4), and accepting the host's dwell
- * threshold (D5).
+ * threshold (D5). The session-current chain is here for the same reason — which
+ * read answers is a pure decision, and it is the one 0.2.0 moved.
  */
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
@@ -13,11 +14,13 @@ import {
   TERMINAL_SEEN_REASONS,
   classifySeenOutcome,
   createAttemptGate,
+  resolveCurrentSession,
   resolveDwellMs,
   selectWatchTarget,
   turnOf,
   watchableCandidates,
 } from '../src/client/decide.js'
+import type { SessionRow, SessionsFace, SessionsListSnapshot } from '../src/client/decide.js'
 import { notice } from './client-fixture.js'
 
 describe('D3: choosing what to watch', () => {
@@ -132,5 +135,167 @@ describe('D5: the dwell threshold comes from the host', () => {
     for (const value of [undefined, null, 'soon', Number.NaN, Number.POSITIVE_INFINITY, -1]) {
       assert.equal(resolveDwellMs(value, 1_500), 1_500, String(value))
     }
+  })
+})
+
+/* -------------------------------------------------------------------------- *
+ * The session-current chain.
+ *
+ * `reader` is asserted in every case: it is the value that gets reported as the
+ * drift signal, so "the right id came back" is only half the property. The two
+ * runtime faces are pinned separately (0.1.5 answers with `list.current`, 0.2.0
+ * no longer has it) because that is exactly what moved.
+ * -------------------------------------------------------------------------- */
+
+/** A `HostObservable` double; `onSubscribe` records that someone subscribed. */
+function viewOf(key: unknown, onSubscribe?: () => void): unknown {
+  return {
+    getSnapshot: () => ({ key }),
+    subscribe: () => {
+      onSubscribe?.()
+      return () => {}
+    },
+  }
+}
+
+/**
+ * A `sessions.list` snapshot double.
+ *
+ * `current` is omitted rather than set to undefined when the case does not pass
+ * one, which is how 0.2.0 ships the snapshot.
+ */
+function listOf(rows: Record<string, SessionRow>, current?: string | null): SessionsListSnapshot {
+  return current === undefined ? { byId: rows } : { current, byId: rows }
+}
+
+/** A `sessions` service double. */
+function sessionsOf(rows: Record<string, SessionRow>, current?: string | null): SessionsFace {
+  return { list: { getSnapshot: () => listOf(rows, current) } }
+}
+
+/** A row the main view is showing. */
+function retained(title: string): SessionRow {
+  return { title, retainedBy: { mainView: 1 } }
+}
+
+/** An observable whose read blows up, as a torn-down service would. */
+const throwingView = {
+  getSnapshot: (): never => { throw new Error('service is not ready') },
+}
+
+describe('session current: which of the four reads answers', () => {
+  it('reads the public adapter binding on the 0.1.5 face, and only reads', () => {
+    let subscribes = 0
+    const source = {
+      uiSession: { adapter: { current: viewOf('session-old', () => { subscribes += 1 }) } },
+      sessions: sessionsOf({ 'session-old': { title: 'old' } }, 'session-old'),
+    }
+    assert.deepEqual(
+      resolveCurrentSession(source),
+      { sessionId: 'session-old', title: 'old', reader: 0 },
+    )
+    // Reading the session and observing it are separate changes: this one is
+    // read-only, so a source that is never subscribed still resolves.
+    assert.equal(subscribes, 0)
+  })
+
+  it('reads the same binding on the 0.2.0 face, where the list has no current', () => {
+    const source = {
+      uiSession: { adapter: { current: viewOf('session-new') }, current: viewOf('session-new') },
+      sessions: sessionsOf({ 'session-new': retained('new') }),
+    }
+    assert.deepEqual(
+      resolveCurrentSession(source),
+      { sessionId: 'session-new', title: 'new', reader: 0 },
+    )
+  })
+
+  it('falls back to the 0.2.0 alias when adapter is gone', () => {
+    const source = {
+      uiSession: { current: viewOf('session-new') },
+      sessions: sessionsOf({ 'session-new': retained('new') }),
+    }
+    assert.deepEqual(
+      resolveCurrentSession(source),
+      { sessionId: 'session-new', title: 'new', reader: 1 },
+    )
+  })
+
+  it('falls back to list.current when uiSession is missing entirely', () => {
+    const source = { sessions: sessionsOf({ 'session-old': { title: 'old' } }, 'session-old') }
+    assert.deepEqual(
+      resolveCurrentSession(source),
+      { sessionId: 'session-old', title: 'old', reader: 2 },
+    )
+  })
+
+  it('falls back to the row the main view retains when nothing else answers', () => {
+    const source = {
+      uiSession: {},
+      sessions: sessionsOf({ 'not-retained': {}, 'session-new': retained('new') }),
+    }
+    assert.deepEqual(
+      resolveCurrentSession(source),
+      { sessionId: 'session-new', title: 'new', reader: 3 },
+    )
+  })
+
+  it('reports having no session when none of the four reads answers', () => {
+    const source = {
+      uiSession: {},
+      sessions: sessionsOf({
+        'not-retained': { title: 'x' },
+        'retained-by-nobody': { title: 'y', retainedBy: { mainView: 0 } },
+      }),
+    }
+    assert.deepEqual(
+      resolveCurrentSession(source),
+      { sessionId: null, title: null, reader: -1 },
+    )
+  })
+
+  it('degrades one read at a time instead of throwing', () => {
+    // A throwing source costs one step, not the chain.
+    assert.equal(
+      resolveCurrentSession({
+        uiSession: { adapter: { current: throwingView }, current: viewOf('from-alias') },
+      }).reader,
+      1,
+      'a throwing adapter must degrade to the alias',
+    )
+    // An empty key is not a session id, so the next read gets its turn.
+    assert.deepEqual(
+      resolveCurrentSession({
+        uiSession: { adapter: { current: viewOf('') } },
+        sessions: sessionsOf({}, 'from-list'),
+      }),
+      { sessionId: 'from-list', title: null, reader: 2 },
+    )
+    // Neither is a non-string key.
+    assert.equal(
+      resolveCurrentSession({
+        uiSession: { adapter: { current: viewOf(42) }, current: viewOf(null) },
+      }).reader,
+      -1,
+    )
+    // A malformed or absent service is a missing service, not a crash.
+    assert.equal(resolveCurrentSession({ uiSession: 'not-a-service' }).reader, -1)
+    assert.equal(resolveCurrentSession({}).reader, -1)
+    // A throwing `sessions` must not stop the `uiSession` read...
+    const badSessions = {
+      list: { getSnapshot: () => { throw new Error('no sessions') } },
+    } as unknown as SessionsFace
+    assert.equal(
+      resolveCurrentSession({
+        uiSession: { adapter: { current: viewOf('from-adapter') } },
+        sessions: badSessions,
+      }).reader,
+      0,
+    )
+    // ...and an id found without a readable list still resolves, just titleless.
+    assert.deepEqual(
+      resolveCurrentSession({ uiSession: { adapter: { current: viewOf('lonely') } } }),
+      { sessionId: 'lonely', title: null, reader: 0 },
+    )
   })
 })
