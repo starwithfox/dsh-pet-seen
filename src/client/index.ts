@@ -64,8 +64,15 @@ export interface ClientContext {
 /** How often the ladder is evaluated while the page is focused, in ms. */
 const DWELL_TICK_MS = 300
 
-/** How often pending notices are re-queried while the page is focused. */
-const NOTICES_POLL_MS = 1_000
+/**
+ * How often pending notices are re-queried while the page is focused.
+ *
+ * Exported so a test can recognise this timer and hold it out of the way: the
+ * poll is the one path that can look up the current session entirely on its own,
+ * so a case that is about a switch the page has not noticed has to be able to
+ * prove the query it asserts on did not come from here.
+ */
+export const NOTICES_POLL_MS = 1_000
 
 /**
  * Floor between two `/notices` requests, in ms.
