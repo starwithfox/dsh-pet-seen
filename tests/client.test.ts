@@ -62,6 +62,16 @@ interface FakePage {
   uiSession: FakeUiSession | null
   /** Move the session without announcing it, as a source-less switch does. */
   setSession: (sessionId: string | null) => void
+  /**
+   * Move the session while also keeping the subscription quiet.
+   *
+   * `setSession` always tells the host's observable (`emit`), which is what a
+   * real switch does. This one replaces the value in place (`FakeObservable.set`)
+   * and notifies only when `notify` is true, so a case can put a switch inside an
+   * in-flight response *without* the subscription callback pre-empting the
+   * re-read under test.
+   */
+  releaseSession: (sessionId: string | null, notify?: boolean) => void
   /** Fire a window event the client registered for. */
   fire: (event: string) => void
   dispose: () => void
@@ -118,6 +128,13 @@ function startClient(options: {
     setSession: (next) => {
       sessionId = next
       uiSession?.adapter.current.set(bindingOf(next))
+    },
+    releaseSession: (next, notify = false) => {
+      sessionId = next
+      const current = uiSession?.adapter.current
+      if (current === undefined) return
+      current.set(bindingOf(next))
+      if (notify) current.notify()
     },
     fire: () => {},
     dispose: () => {},
@@ -342,15 +359,18 @@ describe('client wiring: recovering from a refusal', () => {
  * was observed for the session the user left — plus the subscription that only
  * narrows the window in which a switch is *noticed*.
  *
- * The first four cases run on the plain `sessions.list` face, which offers no
- * `subscribe` at all: the generation check has to hold on its own, and a test
- * that let the subscription cover for it would prove nothing about the
- * invariant. The two cases that hold an answer open are also the ones that
- * deliberately fire **no** window event while the session moves — a switch that
- * this page has not noticed yet leaves the cached generation and session id
- * untouched, so only re-reading the source can catch it, and firing an event
- * here would hide exactly that. The last two install a subscribable `uiSession`
- * (read 0) and pin what an emission may and may not do.
+ * The cases on the plain `sessions.list` face offer no `subscribe` at all: the
+ * generation check has to hold on its own, and a test that let the subscription
+ * cover for it would prove nothing about the invariant. The case that holds an
+ * answer open while the session moves also deliberately fires **no** window
+ * event — a switch this page has not noticed yet leaves the cached generation
+ * and session id untouched, so only re-reading the source can catch it, and
+ * firing an event here would hide exactly that.
+ *
+ * The last three install a subscribable `uiSession` (read 0, the read a 0.2.0
+ * page answers with): two pin what an emission may and may not do, and one pins
+ * the same silent switch on that read — where the value can be replaced without
+ * notifying anyone, so the re-read carries the correctness on its own.
  */
 describe('client wiring: leaving a session mid-flight', () => {
   /** The body of every `/seen` report, in order. */
@@ -532,6 +552,77 @@ describe('client wiring: leaving a session mid-flight', () => {
       page.noticesRequests.includes(''),
       false,
       'the early exit must not turn a missing session into a query',
+    )
+  })
+
+  it('lets a silently switched page still watch the new session, despite the stale body', async () => {
+    let releaseA: () => void = () => {}
+    const heldA = new Promise<void>(resolve => { releaseA = resolve })
+    // Both sessions hand the page a notice for turn 3, so whichever body the
+    // client ends up arming is a real notice -- what differs is *whose*.
+    //
+    // Every B answer is held open, for the whole case. That is what removes the
+    // poll as a rescue: the run's poll would otherwise answer for B about a
+    // second later and quietly re-arm the right notice, letting a degraded
+    // client pass. The page stays **visible** (the L2 guard the ladder needs
+    // would refuse to report at all while it is hidden), so the holds are what
+    // mute the noise instead of a hidden page.
+    //
+    // A body is therefore still needed to arm B's notice, and the only one this
+    // case allows is the answer the refused body itself asks for: the request
+    // for B appears immediately, but its response is held too, so B is never
+    // reported here. What is asserted is that the page **asks for B at all**
+    // after the stale body lands, and does so on its own.
+    const held = new Promise<void>(() => {})
+    const page = startClient({
+      sessionId: 'session-a',
+      uiSession: true,
+      notices: asked => (asked === 'session-a' ? [notice('nA', 3)] : [notice('nB', 3)]),
+      hold: asked => (asked === 'session-a' ? heldA : held),
+    })
+
+    page.document.setItems([item(3, 'assistant-step', { top: 200, bottom: 4_000 })])
+    await waitFor(() => page.noticesRequests.includes('session-a'), "A's first request")
+    assert.equal(
+      page.uiSession?.adapter.current.subscribeCount,
+      1,
+      'this case is about read 0 -- the read a 0.2.0 page answers with -- and it does subscribe',
+    )
+    // Let start-up settle first. `apply()` coalesces a refresh a few hundred
+    // milliseconds out, and that timer would otherwise fire *after* the switch
+    // below -- making it, rather than the discard branch, the thing that asks
+    // about the new session, and letting a degraded client pass.
+    await sleep(400)
+    const before = page.noticesRequests.length
+
+    // A switch nobody is told about: `releaseSession` replaces the uiSession
+    // value in place (`FakeObservable.set`, never `emit`), so the subscription
+    // callback does not run, and this case fires no window event either. Nothing
+    // has called `syncSession()` since the switch, so the cached generation and
+    // session id are both stale -- which is the state only a re-read can
+    // resolve. `subscribeCount` staying at 1 is what keeps this case honest.
+    page.releaseSession('session-b')
+    releaseA()
+
+    // Refusing the body adopts the session it refused to describe and re-queries
+    // at once. Nothing else points at B soon: the switch was announced to nobody,
+    // this case fires no events, every B answer is held, and the run's own poll
+    // is a full second away -- which is why the deadline below is shorter than
+    // that second. A degraded client writes the stale body instead, arms *A's*
+    // notice through `retarget()` with the id it captured, and only ever reaches
+    // B on the next poll; measurably, it is ~1 s against ~5 ms here. This is the
+    // only case in the suite that pins the re-read on read 0.
+    const releasedAt = Date.now()
+    await waitFor(
+      () => page.noticesRequests.slice(before).includes('session-b'),
+      'the page to ask about the session the stale body belonged to',
+      550,
+    )
+    const elapsed = Date.now() - releasedAt
+    assert.equal(
+      elapsed < 550,
+      true,
+      `the request must come from the refused body, not the next poll (took ${elapsed} ms)`,
     )
   })
 
