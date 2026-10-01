@@ -10,6 +10,10 @@
  * The client half reads `document`, `window`, `fetch` and `sessionStorage` as
  * globals, exactly as it does in the page, so the suite installs them around
  * each test and removes them afterwards.
+ *
+ * A case that is about a switch this page has *not* noticed yet must move the
+ * session and fire nothing — see the mid-flight suite below before adding a
+ * `page.fire(...)` to one of them.
  */
 import assert from 'node:assert/strict'
 import { after, afterEach, describe, it } from 'node:test'
@@ -336,8 +340,12 @@ describe('client wiring: recovering from a refusal', () => {
  * The first four cases run on the plain `sessions.list` face, which offers no
  * `subscribe` at all: the generation check has to hold on its own, and a test
  * that let the subscription cover for it would prove nothing about the
- * invariant. The last two install a subscribable `uiSession` (read 0) and pin
- * what an emission may and may not do.
+ * invariant. The two cases that hold an answer open are also the ones that
+ * deliberately fire **no** window event while the session moves — a switch that
+ * this page has not noticed yet leaves the cached generation and session id
+ * untouched, so only re-reading the source can catch it, and firing an event
+ * here would hide exactly that. The last two install a subscribable `uiSession`
+ * (read 0) and pin what an emission may and may not do.
  */
 describe('client wiring: leaving a session mid-flight', () => {
   /** The body of every `/seen` report, in order. */
@@ -436,8 +444,13 @@ describe('client wiring: leaving a session mid-flight', () => {
     page.document.setItems([item(3, 'assistant-step', { top: 200, bottom: 4_000 })])
 
     await waitFor(() => page.visibilityReports >= 2, 'the lease refresh before an observation')
+    // The page must stay quiet across the switch: no window event is fired and
+    // nothing here calls `page.setSession` through a notifying source, so no
+    // timer, event or subscription can have synced the new session by the time
+    // the held report lands. That is the condition this case exists for — with
+    // an event fired here, a cached-value check would look correct and only a
+    // re-read of the source can catch it.
     page.setSession('session-b')
-    page.fire('focus')
     releaseVisibility()
 
     await waitFor(() => page.noticesRequests.includes('session-b'), 'a request for B')
@@ -447,10 +460,47 @@ describe('client wiring: leaving a session mid-flight', () => {
       [],
       'an abandoned observation must not be sent to the session the user left',
     )
-    // The page is still alive after dropping it: B's own notice is settled.
+    // The page is still alive after dropping it: B's own notice is settled —
+    // on the back of the request the dropped observation itself asked for,
+    // because nothing else on this page has announced the switch.
     await waitFor(
       () => seenReports(page).some(report => report.sessionId === 'session-b'),
       "B's observation",
+    )
+  })
+
+  it('does not send an observation for a session the user left before the POST', async () => {
+    let releaseSeenLease: () => void = () => {}
+    const heldSeenLease = new Promise<void>(resolve => { releaseSeenLease = resolve })
+    const page = startClient({
+      sessionId: 'session-a',
+      notices: () => [notice('nA', 1, { sessionId: 'session-a' })],
+      // Report #1 is the startup one; #2 is the lease refresh inside
+      // `reportSeen()`. Waiting for #2 to be *in flight* is what puts the switch
+      // below inside that await deterministically, rather than guessing at it.
+      holdVisibility: index => (index === 2 ? heldSeenLease : null),
+    })
+    page.document.setItems([item(1, 'assistant-step', { top: 200, bottom: 900 })])
+
+    await waitFor(() => page.visibilityReports >= 2, 'the observation to reach its lease refresh')
+    // Silent switch: the read has moved to B, nothing was fired, and this face
+    // has no subscription — so the generation and the cached id are both still
+    // A's and neither can answer the question the guard is asking.
+    page.setSession('session-b')
+    page.document.visibleState = 'hidden'
+    releaseSeenLease()
+    await sleep(400)
+
+    // Not "was it labelled A" but "was it sent at all": the lease refresh inside
+    // the observation is what syncs the session, so a guard that only consults
+    // the cached id can *pass* and then post A's observation anyway — the body
+    // carries the id the refresh just adopted, while the notice is one the host
+    // no longer holds for it. Either way the host answers `session-mismatch` and
+    // blacklists the notice for the life of the page.
+    assert.deepEqual(
+      seenReports(page).map(body => body.noticeId),
+      [],
+      "the session that was left must not produce an observation under the new one's name",
     )
   })
 
@@ -465,8 +515,9 @@ describe('client wiring: leaving a session mid-flight', () => {
     page.document.setItems([item(3, 'assistant-step', { top: 200, bottom: 4_000 })])
 
     await waitFor(() => page.noticesRequests.length >= 1, "A's request")
+    // Silent again, and this time the session does not come back: selecting no
+    // session at all must be caught by the same re-read.
     page.setSession(null)
-    page.fire('focus')
     release()
     // Long enough for a wrongly adopted notice to have reached a dwell tick.
     await sleep(900)

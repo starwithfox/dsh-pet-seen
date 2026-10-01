@@ -421,7 +421,10 @@ export function apply(ctx: ClientContext): void {
    * host may still be holding the `focused: false` report the page sent on the
    * way out, and reporting against it is refused for a lease that is merely old.
    * That refresh is also the one await in which the user can leave the session,
-   * so the generation is captured before it and re-checked after.
+   * so the generation is captured before it and re-checked after — and, because
+   * a switch can happen without this page noticing it yet, the source is
+   * re-read as well. `refreshNotices()` answers the same question the same way;
+   * the cached half alone only covers a switch that something already observed.
    */
   const reportSeen = async (noticeId: string, sessionId: string): Promise<void> => {
     const notice = pending.find(candidate => candidate.noticeId === noticeId)
@@ -429,11 +432,27 @@ export function apply(ctx: ClientContext): void {
     attempts.remember(noticeId, Date.now())
     const gen = generation
     await reportVisibility()
-    if (disposed || gen !== generation || currentSessionId !== sessionId) {
+    // A silent switch — no subscription on this face, page hidden so the poll
+    // cannot run, and no timer, event or mutation fired yet — leaves both the
+    // generation and `currentSessionId` untouched, so neither cached value can
+    // answer "is the user still there". Only the source can, and a stale body
+    // must not be sent under the session that was left behind: the host answers
+    // it with `session-mismatch` and blacklists the notice for the life of the
+    // page. This is the reachable leak — the lease refresh above is itself what
+    // adopts the new session, so by the time the POST would be built the body
+    // carries the *new* id while the notice is one the host no longer holds for
+    // it. Adopting the session the read found is what keeps the new one from
+    // waiting for the next poll.
+    const stillCurrent = snapshot()
+    if (disposed || stillCurrent.sessionId !== sessionId) {
       // The user has left this session. Say nothing to the host, count no
       // failure, and do not re-arm: the observation is not wrong, it is simply
       // no longer about anything on screen. (`attempts` was cleared by the same
       // switch, so the remembered attempt costs nothing either.)
+      if (!disposed) {
+        syncSession(stillCurrent)
+        scheduleRefresh()
+      }
       return
     }
     const response = await postJson(BROWSER_ROUTES.seen, {
@@ -445,11 +464,27 @@ export function apply(ctx: ClientContext): void {
       observed: true,
     })
     // The POST is a second await, and landing an old session's verdict on the
-    // new session's state is exactly the kind of cross-talk this guards: a
-    // `retarget(sessionId)` with the old id would tag a new session's notice as
-    // the old one's, and the host's `session-mismatch` refusal would then
-    // blacklist it for the life of the page.
+    // new session's state is the cross-talk this guards: a `retarget(sessionId)`
+    // with the old id would tag a new session's notice as the old one's, and the
+    // host's `session-mismatch` refusal would then blacklist it for the life of
+    // the page.
+    //
+    // Unlike the check above, this pair is defensive rather than demonstrated:
+    // every interleaving that was probed for it (a switch, a removal, both while
+    // the POST is open) is already caught by the cached values, because anything
+    // that syncs the new session also bumps the generation — and the re-read adds
+    // the same answer for a switch that somehow arrived without one. Kept for
+    // symmetry with the first check, and on record as not being pinned by a
+    // failing case; see `IMPL-LOG` §3b.
     if (disposed || gen !== generation || currentSessionId !== sessionId) return
+    const afterPost = snapshot()
+    if (disposed || afterPost.sessionId !== sessionId) {
+      if (!disposed) {
+        syncSession(afterPost)
+        scheduleRefresh()
+      }
+      return
+    }
     const outcome = classifySeenOutcome(
       (response as SeenResponse | null)?.accepted === true,
       (response as SeenResponse | null)?.reason,
