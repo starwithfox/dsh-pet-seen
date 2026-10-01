@@ -10,17 +10,33 @@
  * notice seen. Only `POST /seen`, after an L3 observation on the page, can do
  * that, and only while that tab still holds a live focus lease.
  *
+ * The same report carries the page's **session-read diagnostics** (`reader` and
+ * friends, `FIX-DESIGN` §5.5). They are stored on the lease and surfaced through
+ * {@link BrowserRoutes.diagnostics} so a future DSH that moves the current
+ * session again is visible in `GET /state` within seconds instead of surfacing
+ * as "the popup never goes away".
+ *
  * @module dsh-pet-bridge/routes
  */
 
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import {
   BROWSER_ROUTES,
+  MAX_BY_ID_COUNT,
+  MAX_MESSAGE_LENGTH,
   MAX_REQUEST_BODY_BYTES,
   PROTOCOL_VERSION,
+  clampText,
+  isReaderIndex,
   isSameOriginLoopback,
 } from './protocol.js'
-import type { NoticeSnapshot, NoticesPayload, SeenResponse } from './protocol.js'
+import type {
+  NoticeSnapshot,
+  NoticesPayload,
+  SeenResponse,
+  SessionReaderIndex,
+  TabDiagnostic,
+} from './protocol.js'
 import type { NoticeStore, SessionFacts } from './state.js'
 
 /** A route registration handle as returned by the DSH WebServer. */
@@ -61,6 +77,17 @@ interface Lease {
   focused: boolean
   /** Epoch ms the lease was last refreshed. */
   at: number
+  /**
+   * The drift self-check fields (`FIX-DESIGN` §5.5), last reported by this tab.
+   *
+   * Kept on the lease rather than in a second table because the lease is already
+   * one row per tab with a TTL, which is what makes these bounded and
+   * self-recycling. Null means "this tab has never reported one" — a tab whose
+   * read failed reports `-1`, which is a value and not a null.
+   */
+  reader: SessionReaderIndex | null
+  readerReason: string | null
+  byIdCount: number | null
 }
 
 /** A mounted set of browser routes. */
@@ -71,6 +98,13 @@ export interface BrowserRoutes {
   readonly leases: () => ReadonlyMap<string, Lease>
   /** Whether the given tab currently holds an effective focus lease. */
   readonly hasEffectiveLease: (tabId: string, at: number) => boolean
+  /**
+   * The session-read diagnostics of every tab whose lease is still fresh.
+   *
+   * This is the only carrier for a `reader === -1` reading: the per-session
+   * snapshot needs a session id, and `-1` means there was none.
+   */
+  readonly diagnostics: () => readonly TabDiagnostic[]
   /** Mounted route paths, in registration order. */
   readonly paths: readonly string[]
 }
@@ -143,6 +177,32 @@ export function mountBrowserRoutes(deps: BrowserRoutesDeps): BrowserRoutes {
     return lease.visible && lease.focused
   }
 
+  /**
+   * Session-read diagnostics of every tab whose lease has not gone stale.
+   *
+   * Freshness uses the same rule as {@link hasEffectiveLease} rather than the
+   * sweeper's interval, so a tab stops being reported at exactly the moment it
+   * stops being able to observe anything — and a test can assert the bound
+   * without waiting for the two-second sweep.
+   */
+  const diagnostics = (): TabDiagnostic[] => {
+    const now = Date.now()
+    const rows: TabDiagnostic[] = []
+    for (const [tabId, lease] of leases) {
+      if (now - lease.at > deps.leaseTtlMs) continue
+      rows.push({
+        tabId,
+        sessionId: lease.sessionId,
+        reader: lease.reader,
+        readerReason: lease.readerReason,
+        byIdCount: lease.byIdCount,
+        at: lease.at,
+      })
+    }
+    rows.sort((left, right) => right.at - left.at)
+    return rows
+  }
+
   /** Same-origin gate shared by all three routes. */
   const sameOrigin = (req: IncomingMessage, res: ServerResponse): boolean => {
     if (!isSameOriginLoopback(req.headers.origin, req.headers.host)) {
@@ -173,17 +233,48 @@ export function mountBrowserRoutes(deps: BrowserRoutesDeps): BrowserRoutes {
         return
       }
       const sessionId = typeof body.sessionId === 'string' && body.sessionId !== '' ? body.sessionId : null
+      /*
+       * Diagnostics are read as a unit, keyed on the read index: a page that
+       * knows how to report one always reports the index, and pairing an index
+       * from this report with a reason from an older one would manufacture a
+       * fact nobody observed. A report that carries no index at all — an older
+       * client, or the best-effort `pagehide` withdrawal — keeps the tab's last
+       * real answer instead of blanking it.
+       */
+      const diagnostics = isReaderIndex(body.reader)
+        ? {
+            reader: body.reader,
+            readerReason: clampText(
+              typeof body.readerReason === 'string' ? body.readerReason : undefined,
+              MAX_MESSAGE_LENGTH,
+            ) ?? null,
+            byIdCount: typeof body.byIdCount === 'number'
+              && Number.isSafeInteger(body.byIdCount)
+              && body.byIdCount >= 0
+              ? Math.min(body.byIdCount, MAX_BY_ID_COUNT)
+              : null,
+          }
+        : null
+      const previous = leases.get(body.tabId)
       leases.set(body.tabId, {
         sessionId,
         visible: body.visible === true,
         focused: body.focused === true,
         at: Date.now(),
+        reader: diagnostics === null ? previous?.reader ?? null : diagnostics.reader,
+        readerReason: diagnostics === null ? previous?.readerReason ?? null : diagnostics.readerReason,
+        byIdCount: diagnostics === null ? previous?.byIdCount ?? null : diagnostics.byIdCount,
       })
       // The client snapshot is the only place a session title reliably exists;
       // the host records the *shape* here and never invents one.
       if (sessionId !== null) {
         const facts: SessionFacts = {}
         if (typeof body.title === 'string' || body.title === null) facts.title = body.title
+        // `-1` means the page found no session, so a report that carries one
+        // alongside a session id is self-contradictory: the reading is kept in
+        // the tab diagnostics (where it says what the page actually saw) and
+        // never written as a fact about this session.
+        if (diagnostics !== null && diagnostics.reader !== -1) facts.reader = diagnostics.reader
         deps.store.recordSessionFacts(sessionId, facts, Date.now())
       }
       sendJson(res, 200, { v: PROTOCOL_VERSION, ok: true })
@@ -309,6 +400,7 @@ export function mountBrowserRoutes(deps: BrowserRoutesDeps): BrowserRoutes {
     },
     leases: () => leases,
     hasEffectiveLease,
+    diagnostics,
     paths: [BROWSER_ROUTES.visibility, BROWSER_ROUTES.notices, BROWSER_ROUTES.seen],
   }
 }

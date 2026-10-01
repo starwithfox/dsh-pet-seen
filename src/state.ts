@@ -27,6 +27,7 @@ import type {
   NoticeState,
   PetEvent,
   SessionProgressSnapshot,
+  SessionReaderIndex,
   TurnEndKind,
   TurnEndRecord,
 } from './protocol.js'
@@ -87,6 +88,16 @@ interface SessionState {
   running: boolean
   run: RunState | null
   updatedAt: number
+  /**
+   * Which page read last named this session, or null when none has reported.
+   *
+   * Null and `-1` are different facts and must not be collapsed: null means "no
+   * page has told us", while `-1` means "a page looked and found nothing" —
+   * except that the second can never be recorded here, because a `-1` reading
+   * carries no session id to record it against. The host keeps those in the
+   * per-tab diagnostics instead.
+   */
+  reader: SessionReaderIndex | null
 }
 
 /** Options for {@link NoticeStore.recordProgress}. */
@@ -103,6 +114,13 @@ export interface SessionFacts {
   title?: string | null
   cwd?: string | null
   subagent?: boolean
+  /**
+   * Which page read named this session, when the caller learned one.
+   *
+   * Only ever set together with a real session id: `-1` is reported through the
+   * per-tab diagnostics, which do not need a session to exist.
+   */
+  reader?: SessionReaderIndex
 }
 
 /**
@@ -293,6 +311,10 @@ export class NoticeStore {
 
   /**
    * Store session facts learned outside the event stream.
+   *
+   * The page is the source of two of these: the title (which only the client
+   * snapshot has) and `reader` (which read named the session), both observed on
+   * a `POST /pet-bridge/visibility`.
    *
    * @param sessionId - root session id.
    * @param facts - only the fields whose values are known.
@@ -489,6 +511,9 @@ export class NoticeStore {
         completedTodoCount: bucket.run?.completedTodoCount ?? 0,
         percent: percentOf(bucket.run),
         updatedAt: bucket.updatedAt,
+        // Omitted, not `undefined`: the field is optional and a host that never
+        // heard from a page must not look like one that heard "no read".
+        ...(bucket.reader === null ? {} : { reader: bucket.reader }),
       })
     }
     rows.sort((left, right) => right.updatedAt - left.updatedAt)
@@ -544,6 +569,10 @@ export class NoticeStore {
       bucket.subagent = facts.subagent
       changed = true
     }
+    if (facts.reader !== undefined && facts.reader !== bucket.reader) {
+      bucket.reader = facts.reader
+      changed = true
+    }
     return changed
   }
 
@@ -560,6 +589,7 @@ export class NoticeStore {
       running: false,
       run: null,
       updatedAt: at,
+      reader: null,
     }
     this.sessions.set(sessionId, created)
     return created

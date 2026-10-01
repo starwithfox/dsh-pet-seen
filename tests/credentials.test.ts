@@ -46,6 +46,7 @@ const idleDeps = {
     notices: [],
     petPort: null,
     browserRoutes: false,
+    browserTabs: [],
   }),
   onHello: () => {},
   onAck: () => null,

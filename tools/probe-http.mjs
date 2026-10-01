@@ -17,7 +17,12 @@
  *      bundle from the boot payload (a 404 here is indistinguishable from "the
  *      app never booted" when seen from inside the driver).
  *   3. the host's control plane: the credential file the pet and the CDP driver
- *      read, and the `/state` snapshot behind it.
+ *      read, the `/state` snapshot behind it, and the per-tab session-read
+ *      diagnostics that snapshot carries (`browserTabs`). Those diagnostics are
+ *      the drift self-check of `FIX-DESIGN` §5.5, and this probe is one of the
+ *      two readers that are supposed to notice: a tab that can see sessions but
+ *      names none (`reader === -1`) fails the run, and a tab answering from a
+ *      fallback read prints a warning without failing.
  *
  * Read-only: it starts nothing and changes nothing. Exit code is 1 when any
  * fetched asset failed **or** the control plane is unhealthy, so it can be used
@@ -53,6 +58,12 @@ const cookie = buildSessionCookie({
   expiresAt: now + 24 * 60 * 60 * 1000,
 })
 console.log(`[probe] cookie ${splitCookie(cookie).name}`)
+
+/** Enough of an opaque id to match it between two lines of output. */
+const shortId = (value) => {
+  const text = String(value ?? '-')
+  return text.length > 8 ? text.slice(0, 8) : text
+}
 
 /** Fetch one path, reporting status/size, and print a short body excerpt. */
 async function fetchPath(label, path, { headers = {}, excerpt = 0 } = {}) {
@@ -130,11 +141,29 @@ if (WEB_ONLY) {
       + ` revision=${state?.revision ?? '-'} petPort=${state?.petPort ?? '-'}`
       + ` writtenAt=${bridge.writtenAt ?? '-'}`)
     for (const session of state?.sessions ?? []) {
-      console.log(`  ${session.sessionId}  running=${session.running}  title="${session.title ?? ''}"`)
+      console.log(`  ${session.sessionId}  running=${session.running}  title="${session.title ?? ''}"`
+        + `${session.reader === undefined ? '' : `  reader=${session.reader}`}`)
     }
     if ((state?.sessions ?? []).length === 0) {
       console.log('  (no sessions — a notice can never be minted for this run)')
     }
+    /*
+     * The drift self-check. `byId` tells the two readings apart that `reader`
+     * alone cannot: `-1` with sessions present is drift, while `-1` with an
+     * empty list is just an empty app. A non-zero index is not a failure — the
+     * chain is *designed* to fall back — but it is the earliest signal that the
+     * preferred read is gone, so it is reported loudly and not as an error.
+     */
+    const tabs = Array.isArray(state?.browserTabs) ? state.browserTabs : []
+    if (tabs.length === 0) {
+      console.log('  (no browser tab has reported a session read yet)')
+    }
+    for (const tab of tabs) {
+      console.log(`  tab ${shortId(tab.tabId)} reader=${tab.reader ?? '-'} (${tab.readerReason ?? '-'})`
+        + ` byId=${tab.byIdCount ?? '-'} session="${shortId(tab.sessionId)}"`)
+    }
+    const blind = tabs.filter((tab) => tab.reader === -1 && (tab.byIdCount ?? 0) > 0)
+    const degraded = tabs.filter((tab) => typeof tab.reader === 'number' && tab.reader > 0)
     if (response.status === 401) {
       problem = `HTTP 401: the file's token is not the live one, so ${'~/.dsh/pet-bridge.json'} is stale`
         + ' — restart DSH to republish it (the token is never printed and cannot be recovered)'
@@ -142,6 +171,15 @@ if (WEB_ONLY) {
       problem = `HTTP ${response.status}`
     } else if (state === null || typeof state.revision !== 'number') {
       problem = 'the response body is not a /state snapshot (no numeric `revision`)'
+    }
+    if (problem === null && blind.length > 0) {
+      problem = `${blind.length} browser tab(s) can see sessions (byId=${blind[0].byIdCount}) but none of the`
+        + ' four reads names the current one: the client session read has drifted, and notice retraction'
+        + ' is blind until it is fixed (see FIX-DESIGN §5.5)'
+    }
+    if (degraded.length > 0) {
+      console.log(`  !! ${degraded.length} tab(s) answered from a fallback read (reader=${degraded[0].reader}`
+        + ` = ${degraded[0].readerReason ?? '?'}, not 0): earliest drift signal — not a failure on its own`)
     }
   } catch (error) {
     problem = `${String(error)} — is the file readable and the control listener up?`

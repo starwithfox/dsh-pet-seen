@@ -10,6 +10,10 @@
  *   - every retained notice, with its short id, turn, state and delivery flag,
  *     so `shown` -> `dismissed` / `seen` transitions can be quoted as evidence
  *     without ever printing the token.
+ *   - every browser tab's session-read diagnostic, so "which of the four reads
+ *     named the session" can be quoted the same way. This is one of the two
+ *     readers of the drift self-check (`FIX-DESIGN` §5.5); `probe-http.mjs` is
+ *     the other, and it is the one that turns drift into a failing exit code.
  *
  * Read-only. Exits 1 when `/state` cannot be read.
  *
@@ -50,7 +54,14 @@ if (state !== null) {
     + ` petPort=${state.petPort ?? '-'} notices=${notices.length}`,
   )
   for (const session of state.sessions ?? []) {
-    console.log(`session ${short(session.sessionId)} running=${String(session.running)} title="${session.title ?? ''}"`)
+    console.log(`session ${short(session.sessionId)} running=${String(session.running)} title="${session.title ?? ''}"`
+      + `${session.reader === undefined ? '' : ` reader=${session.reader}`}`)
+  }
+  const tabs = Array.isArray(state.browserTabs) ? state.browserTabs : []
+  for (const tab of tabs) {
+    console.log(`tab ${short(tab.tabId)} reader=${tab.reader ?? '-'} (${tab.readerReason ?? '-'})`
+      + ` byId=${tab.byIdCount ?? '-'} session=${short(tab.sessionId)}`
+      + (tab.reader === -1 && (tab.byIdCount ?? 0) > 0 ? '  <-- DRIFT: sessions visible, none named' : ''))
   }
   for (const notice of notices) {
     console.log(

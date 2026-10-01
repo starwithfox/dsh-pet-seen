@@ -299,6 +299,10 @@ export function apply(
     notices: store.allNotices(),
     petPort: client.isHandshaken ? client.port : null,
     browserRoutes: browserRoutes !== null,
+    // The drift self-check (`FIX-DESIGN` §5.5). Outside `revision` on purpose:
+    // it is rewritten on every lease refresh, so counting it as a snapshot
+    // change would make `revision` churn while nothing real had moved.
+    browserTabs: browserRoutes?.diagnostics() ?? [],
   })
 
   /** Push a normalized event; suppressed until the pet has ever handshaken. */
@@ -687,7 +691,9 @@ export type {
   PetEvent,
   PetEventName,
   SessionProgressSnapshot,
+  SessionReaderIndex,
   StatePayload,
+  TabDiagnostic,
   TurnEndKind,
   TurnEndRecord,
 } from './protocol.js'

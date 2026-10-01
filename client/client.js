@@ -262,6 +262,46 @@ window.__ModuleLoader__.load({
 				reader: -1
 			};
 		}
+		/**
+		* How many session rows the `sessions.list` snapshot is currently holding.
+		*
+		* Evidence, not behaviour: a page that can see 152 sessions and still cannot
+		* name the current one is drifting, while an empty list only means no session
+		* exists yet. Those two readings are indistinguishable from `reader` alone,
+		* which is why the count travels with it. Reads nothing else, and never throws.
+		*
+		* @param source - the same source `resolveCurrentSession()` was given.
+		* @returns the number of `byId` entries, or 0 when there is no readable list.
+		*/
+		function byIdCount(source) {
+			try {
+				const byId = sessionList(source.sessions)?.byId;
+				if (typeof byId !== "object" || byId === null) return 0;
+				return Object.keys(byId).length;
+			} catch {
+				return 0;
+			}
+		}
+		/**
+		* Human-readable name of the read that answered.
+		*
+		* The index is the machine signal; this is what makes a `/state` snapshot or a
+		* probe line readable without keeping §5.2's table open. `-1` names the failure
+		* itself rather than a source, because "all four reads missed" is a fact about
+		* the chain and not about any one read.
+		*
+		* @param reader - a hit index from `resolveCurrentSession()`.
+		* @returns a fixed label; never throws and never varies between runs.
+		*/
+		function readerReason(reader) {
+			switch (reader) {
+				case 0: return "uiSession.adapter.current";
+				case 1: return "uiSession.current";
+				case 2: return "sessions.list.current";
+				case 3: return "sessions.list.byId.retainedBy";
+				default: return "no-read-answered";
+			}
+		}
 		/** Narrow an unknown value to a readable observable, or null. */
 		function observableOf(value) {
 			if (typeof value !== "object" || value === null) return null;
@@ -770,6 +810,10 @@ window.__ModuleLoader__.load({
 		*    reports `/seen` only when L3 holds — refreshing the focus lease first, so a
 		*    report cannot be refused for a lease that the page simply had not renewed
 		*    yet.
+		* 4. Reports *which* read named that session on every one of those reports,
+		*    including the `-1` reading where none did. That is the drift self-check of
+		*    `FIX-DESIGN` §5.5: the same condition that silently broke notice retraction
+		*    on 0.2.0-rc.2 now leaves a trace in `GET /state` within seconds.
 		*
 		* Every decision it makes is in `decide.ts`; this file is only the wiring.
 		*
@@ -925,20 +969,22 @@ window.__ModuleLoader__.load({
 					return;
 				}
 			};
+			/** The values the read chain is allowed to look at, re-read on every call. */
+			const sessionSource = () => ({
+				uiSession: readUiSession(),
+				sessions: ctx.sessions
+			});
 			/**
 			* The session the user is looking at, its title, and which read found it.
 			*
 			* `reader` names which read answered, and is consumed twice: to pick the
-			* source worth following (below) and, from step 5 on, as the drift signal
-			* reported upstream. A failure here is an ordinary "no current session" (invariant: the
-			* page never breaks because of this plugin).
+			* source worth following (below) and as the drift signal reported upstream
+			* through {@link readDiagnostics}. A failure here is an ordinary "no current
+			* session" (invariant: the page never breaks because of this plugin).
 			*/
 			const snapshot = () => {
 				try {
-					return resolveCurrentSession({
-						uiSession: readUiSession(),
-						sessions: ctx.sessions
-					});
+					return resolveCurrentSession(sessionSource());
 				} catch {
 					return {
 						sessionId: null,
@@ -947,6 +993,22 @@ window.__ModuleLoader__.load({
 					};
 				}
 			};
+			/**
+			* The drift self-check fields (`FIX-DESIGN` §5.5) that ride with every report.
+			*
+			* `reader` is already known from the snapshot the caller took; the other two
+			* cost one extra `sessions.list` read, which is a rounding error next to the
+			* HTTP round trip the body is about to make. Diagnostics only: the host stores
+			* them and nothing here can mark a notice seen.
+			*
+			* @param resolved - the snapshot whose `reader` is being reported.
+			* @returns the optional fields to spread into the visibility body.
+			*/
+			const readDiagnostics = (resolved) => ({
+				reader: resolved.reader,
+				readerReason: readerReason(resolved.reader),
+				byIdCount: byIdCount(sessionSource())
+			});
 			let refreshTimer = null;
 			let lastRefreshAt = null;
 			/** Coalesce bursts, and keep a floor between two actual queries. */
@@ -986,10 +1048,7 @@ window.__ModuleLoader__.load({
 			*/
 			const bindSessionSubscription = (resolved) => {
 				if (resolved.reader === -1) return;
-				const observable = currentSessionObservable({
-					uiSession: readUiSession(),
-					sessions: ctx.sessions
-				}, resolved.reader);
+				const observable = currentSessionObservable(sessionSource(), resolved.reader);
 				if (observable === null || observable === subscribedTo) return;
 				if (typeof observable.subscribe !== "function") return;
 				unsubscribeSource?.();
@@ -1031,14 +1090,15 @@ window.__ModuleLoader__.load({
 			};
 			/** Send the current L1/L2 state so the host can maintain this tab's lease. */
 			const reportVisibility = async () => {
-				const { sessionId, title } = syncSession();
+				const resolved = syncSession();
 				await postJson(BROWSER_ROUTES.visibility, {
 					v: 1,
 					tabId: id,
-					sessionId,
+					sessionId: resolved.sessionId,
 					visible: document.visibilityState === "visible",
 					focused: document.hasFocus(),
-					title
+					title: resolved.title,
+					...readDiagnostics(resolved)
 				});
 			};
 			/** Point the tracker at whichever unconfirmed notice is worth watching. */
@@ -1140,14 +1200,15 @@ window.__ModuleLoader__.load({
 				refreshNotices();
 			};
 			const onUnload = () => {
-				const { sessionId, title } = snapshot();
+				const current = snapshot();
 				const body = JSON.stringify({
 					v: 1,
 					tabId: id,
-					sessionId,
+					sessionId: current.sessionId,
 					visible: false,
 					focused: false,
-					title
+					title: current.title,
+					...readDiagnostics(current)
 				});
 				try {
 					if (typeof navigator.sendBeacon === "function") {

@@ -18,6 +18,10 @@
  *    reports `/seen` only when L3 holds — refreshing the focus lease first, so a
  *    report cannot be refused for a lease that the page simply had not renewed
  *    yet.
+ * 4. Reports *which* read named that session on every one of those reports,
+ *    including the `-1` reading where none did. That is the drift self-check of
+ *    `FIX-DESIGN` §5.5: the same condition that silently broke notice retraction
+ *    on 0.2.0-rc.2 now leaves a trace in `GET /state` within seconds.
  *
  * Every decision it makes is in `decide.ts`; this file is only the wiring.
  *
@@ -27,15 +31,22 @@
 import { BROWSER_ROUTES, PROTOCOL_VERSION } from '../protocol.js'
 import type { NoticesPayload, PendingNotice, SeenResponse } from '../protocol.js'
 import {
+  byIdCount,
   classifySeenOutcome,
   createAttemptGate,
   currentSessionObservable,
+  readerReason,
   resolveCurrentSession,
   resolveDwellMs,
   selectWatchTarget,
   watchableCandidates,
 } from './decide.js'
-import type { ObservableView, ResolvedCurrentSession, SessionsFace } from './decide.js'
+import type {
+  CurrentSessionSource,
+  ObservableView,
+  ResolvedCurrentSession,
+  SessionsFace,
+} from './decide.js'
 import { VisibilityTracker, createVisibilityDeps } from './visibility.js'
 
 /** Services this half needs. These are runtime package names, not values. */
@@ -235,21 +246,44 @@ export function apply(ctx: ClientContext): void {
     }
   }
 
+  /** The values the read chain is allowed to look at, re-read on every call. */
+  const sessionSource = (): CurrentSessionSource => ({
+    uiSession: readUiSession(),
+    sessions: ctx.sessions,
+  })
+
   /**
    * The session the user is looking at, its title, and which read found it.
    *
    * `reader` names which read answered, and is consumed twice: to pick the
-   * source worth following (below) and, from step 5 on, as the drift signal
-   * reported upstream. A failure here is an ordinary "no current session" (invariant: the
-   * page never breaks because of this plugin).
+   * source worth following (below) and as the drift signal reported upstream
+   * through {@link readDiagnostics}. A failure here is an ordinary "no current
+   * session" (invariant: the page never breaks because of this plugin).
    */
   const snapshot = (): ResolvedCurrentSession => {
     try {
-      return resolveCurrentSession({ uiSession: readUiSession(), sessions: ctx.sessions })
+      return resolveCurrentSession(sessionSource())
     } catch {
       return { sessionId: null, title: null, reader: -1 }
     }
   }
+
+  /**
+   * The drift self-check fields (`FIX-DESIGN` §5.5) that ride with every report.
+   *
+   * `reader` is already known from the snapshot the caller took; the other two
+   * cost one extra `sessions.list` read, which is a rounding error next to the
+   * HTTP round trip the body is about to make. Diagnostics only: the host stores
+   * them and nothing here can mark a notice seen.
+   *
+   * @param resolved - the snapshot whose `reader` is being reported.
+   * @returns the optional fields to spread into the visibility body.
+   */
+  const readDiagnostics = (resolved: ResolvedCurrentSession): Record<string, unknown> => ({
+    reader: resolved.reader,
+    readerReason: readerReason(resolved.reader),
+    byIdCount: byIdCount(sessionSource()),
+  })
 
   /* ------------------------------------------------------------------ *
    * Notice refresh
@@ -297,10 +331,7 @@ export function apply(ctx: ClientContext): void {
    */
   const bindSessionSubscription = (resolved: ResolvedCurrentSession): void => {
     if (resolved.reader === -1) return
-    const observable = currentSessionObservable(
-      { uiSession: readUiSession(), sessions: ctx.sessions },
-      resolved.reader,
-    )
+    const observable = currentSessionObservable(sessionSource(), resolved.reader)
     if (observable === null || observable === subscribedTo) return
     if (typeof observable.subscribe !== 'function') return
     unsubscribeSource?.()
@@ -348,14 +379,15 @@ export function apply(ctx: ClientContext): void {
 
   /** Send the current L1/L2 state so the host can maintain this tab's lease. */
   const reportVisibility = async (): Promise<void> => {
-    const { sessionId, title } = syncSession()
+    const resolved = syncSession()
     await postJson(BROWSER_ROUTES.visibility, {
       v: PROTOCOL_VERSION,
       tabId: id,
-      sessionId,
+      sessionId: resolved.sessionId,
       visible: document.visibilityState === 'visible',
       focused: document.hasFocus(),
-      title,
+      title: resolved.title,
+      ...readDiagnostics(resolved),
     })
   }
 
@@ -524,14 +556,18 @@ export function apply(ctx: ClientContext): void {
   const onUnload = (): void => {
     // Best-effort lease withdrawal; a tab that vanishes without this is covered
     // by the host's lease TTL.
-    const { sessionId, title } = snapshot()
+    const current = snapshot()
     const body = JSON.stringify({
       v: PROTOCOL_VERSION,
       tabId: id,
-      sessionId,
+      sessionId: current.sessionId,
       visible: false,
       focused: false,
-      title,
+      title: current.title,
+      // Sent here too, so the withdrawal cannot look like an older client: the
+      // host keeps the last real answer either way, but a consistent body is
+      // what makes "the tab reported no read" impossible to misread.
+      ...readDiagnostics(current),
     })
     try {
       if (typeof navigator.sendBeacon === 'function') {

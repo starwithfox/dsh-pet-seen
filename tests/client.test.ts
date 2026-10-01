@@ -749,3 +749,77 @@ describe('client wiring: leaving a session mid-flight', () => {
     )
   })
 })
+
+/* -------------------------------------------------------------------------- *
+ * The drift self-check, from the page's side.
+ *
+ * `decide.test.ts` pins the read chain and the two derived values. What is
+ * pinned here is that they actually leave the page, on the report the host reads
+ * them from, and that the two readings `reader === -1` can mean are told apart
+ * by `byIdCount`: an empty app, or a page looking at sessions it cannot name.
+ * The second one is the drift signal (`FIX-DESIGN` §5.5), and it used to leave
+ * no trace anywhere.
+ * -------------------------------------------------------------------------- */
+describe('client wiring: reporting the session read', () => {
+  /** The body of the first `/visibility` report the page sent. */
+  function firstVisibility(page: FakePage): Record<string, unknown> {
+    const call = page.calls.find(entry => entry.path.endsWith('/visibility'))
+    assert.ok(call !== undefined, 'the page must report its visibility')
+    return call.body
+  }
+
+  it('reports the public adapter read, with the row count behind it', async () => {
+    // `listCurrent: false` is the 0.2.0 shape: read 2 cannot answer, so a `0`
+    // here really is the `uiSession` binding and not the old fallback.
+    const page = startClient({ notices: () => [], uiSession: true, listCurrent: false })
+    await waitFor(() => page.visibilityReports >= 1, 'the startup report')
+
+    const body = firstVisibility(page)
+    assert.equal(body.sessionId, 'session-1')
+    assert.equal(body.reader, 0)
+    assert.equal(body.readerReason, 'uiSession.adapter.current')
+    assert.equal(body.byIdCount, 1)
+  })
+
+  it('reports the fallback read on a runtime without uiSession', async () => {
+    const page = startClient({ notices: () => [] })
+    await waitFor(() => page.visibilityReports >= 1, 'the startup report')
+
+    const body = firstVisibility(page)
+    assert.equal(body.sessionId, 'session-1')
+    assert.equal(body.reader, 2)
+    assert.equal(body.readerReason, 'sessions.list.current')
+  })
+
+  it('reports a read that answered nothing while the session list is not empty', async () => {
+    // No `uiSession`, no `list.current`, and a row the main view does not retain
+    // => sessions are visible and none of the four reads names one.
+    const page = startClient({ notices: () => [], listCurrent: false })
+    await waitFor(() => page.visibilityReports >= 1, 'the startup report')
+
+    const body = firstVisibility(page)
+    assert.equal(body.sessionId, null)
+    assert.equal(body.reader, -1)
+    assert.equal(body.readerReason, 'no-read-answered')
+    assert.equal(body.byIdCount, 1, 'the sessions were there — that is what makes this drift')
+  })
+
+  it('sends the same diagnostics on the withdrawal, so it cannot look like an old client', async () => {
+    const page = startClient({ notices: () => [], uiSession: true, listCurrent: false })
+    await waitFor(() => page.visibilityReports >= 1, 'the startup report')
+
+    // `pagehide` is the one report that does not go through `reportVisibility()`:
+    // it builds its body by hand, so it must carry the diagnostics explicitly or
+    // the host would read the withdrawal as a client that never sent them.
+    const before = page.calls.length
+    page.fire('pagehide')
+
+    const withdrawal = page.calls.slice(before).find(call => call.path.endsWith('/visibility'))
+    assert.ok(withdrawal !== undefined, 'the withdrawal reached the host')
+    assert.equal(withdrawal.body.visible, false)
+    assert.equal(withdrawal.body.focused, false)
+    assert.equal(withdrawal.body.reader, 0)
+    assert.equal(withdrawal.body.readerReason, 'uiSession.adapter.current')
+    assert.equal(withdrawal.body.byIdCount, 1)
+  })
+})

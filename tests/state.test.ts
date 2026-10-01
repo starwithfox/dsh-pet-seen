@@ -149,6 +149,27 @@ describe('NoticeStore: parallel sessions', () => {
     // The bucket survives for bookkeeping, but it is not reported as a root run.
     assert.equal(store.removeSession('missing', 1_200), false)
   })
+
+  it('carries the reported session read without inventing one', () => {
+    const store = makeStore()
+    store.startRun('s1', 'run-1', 1_000)
+
+    // No page has reported: the field is *absent*, which is a different claim
+    // from a page that looked and found nothing.
+    assert.equal(Object.hasOwn(store.progressSnapshot()[0] ?? {}, 'reader'), false)
+
+    store.recordSessionFacts('s1', { reader: 0 }, 1_100)
+    assert.equal(store.progressSnapshot()[0]?.reader, 0)
+
+    // A later report naming a fallback read replaces the answer...
+    store.recordSessionFacts('s1', { reader: 3 }, 1_200)
+    assert.equal(store.progressSnapshot()[0]?.reader, 3)
+
+    // ...while facts that say nothing about the read leave it alone.
+    store.recordSessionFacts('s1', { title: 'renamed' }, 1_300)
+    assert.equal(store.progressSnapshot()[0]?.reader, 3)
+    assert.equal(store.progressSnapshot()[0]?.title, 'renamed')
+  })
 })
 
 describe('NoticeStore: notice lifecycle', () => {

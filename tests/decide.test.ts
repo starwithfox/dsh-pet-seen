@@ -6,15 +6,18 @@
  * by an off-screen older notice (D3), treating a transient refusal as
  * retryable rather than as a lifetime ban (D4), and accepting the host's dwell
  * threshold (D5). The session-current chain is here for the same reason — which
- * read answers is a pure decision, and it is the one 0.2.0 moved.
+ * read answers is a pure decision, and it is the one 0.2.0 moved — and so are
+ * the two values derived from it for the drift self-check (`FIX-DESIGN` §5.5).
  */
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import {
   TERMINAL_SEEN_REASONS,
+  byIdCount,
   classifySeenOutcome,
   createAttemptGate,
   currentSessionObservable,
+  readerReason,
   resolveCurrentSession,
   resolveDwellMs,
   selectWatchTarget,
@@ -348,5 +351,45 @@ describe('session current: which source to follow', () => {
     assert.equal(currentSessionObservable({ uiSession: exploding }, 0), null)
     // ...and the source the other reads use is unaffected.
     assert.equal(currentSessionObservable({ uiSession: exploding, sessions }, 2), sessions.list)
+  })
+})
+
+/* -------------------------------------------------------------------------- *
+ * The other two fields of the drift self-check.
+ *
+ * `reader` is asserted in every chain case above; these are what travel with it
+ * (`FIX-DESIGN` §5.5). `byIdCount` is what tells "no session exists yet" apart
+ * from "sessions exist and none of the four reads names one" — the two readings
+ * `reader === -1` cannot distinguish on its own — and `readerReason` is what
+ * makes a `/state` snapshot or a probe line readable without keeping §5.2's
+ * table open.
+ * -------------------------------------------------------------------------- */
+
+describe('session current: the reported diagnostics', () => {
+  it('counts the rows the snapshot holds, and answers zero when it cannot', () => {
+    assert.equal(byIdCount({ sessions: sessionsOf({}) }), 0)
+    assert.equal(
+      byIdCount({ sessions: sessionsOf({ a: { title: 'a' }, b: { title: 'b' }, c: retained('c') }) }),
+      3,
+    )
+    // No service, a snapshot that is not an object, and a read that throws all
+    // mean the same thing to a diagnostic: nothing to count.
+    assert.equal(byIdCount({}), 0)
+    const notASnapshot = { list: { getSnapshot: (): unknown => null } }
+    assert.equal(byIdCount({ sessions: notASnapshot as SessionsFace }), 0)
+    const exploding = {
+      list: { getSnapshot: (): never => { throw new Error('service is not ready') } },
+    }
+    assert.equal(byIdCount({ sessions: exploding }), 0)
+    // An unrelated broken `uiSession` does not affect the count.
+    assert.equal(byIdCount({ uiSession: throwingView, sessions: sessionsOf({ a: {} }) }), 1)
+  })
+
+  it('names the read that answered, and the failure when none did', () => {
+    assert.equal(readerReason(0), 'uiSession.adapter.current')
+    assert.equal(readerReason(1), 'uiSession.current')
+    assert.equal(readerReason(2), 'sessions.list.current')
+    assert.equal(readerReason(3), 'sessions.list.byId.retainedBy')
+    assert.equal(readerReason(-1), 'no-read-answered')
   })
 })

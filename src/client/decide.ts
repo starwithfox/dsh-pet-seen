@@ -20,7 +20,14 @@
  * @module dsh-pet-bridge/client/decide
  */
 
-import type { PendingNotice } from '../protocol.js'
+import type { PendingNotice, SessionReaderIndex } from '../protocol.js'
+
+/**
+ * Re-exported so the page's own modules keep naming the index through the module
+ * that owns the read chain, while the wire type itself stays in `protocol.ts`
+ * (the host half has to know it too, and must not import client code).
+ */
+export type { SessionReaderIndex }
 
 /** One notice plus the turn number the page can match it against. */
 export interface WatchCandidate {
@@ -267,9 +274,6 @@ export interface SessionsFace {
   list: ObservableView<SessionsListSnapshot>
 }
 
-/** Which read in the chain produced the session id; `-1` when none did. */
-export type SessionReaderIndex = 0 | 1 | 2 | 3 | -1
-
 /** The current session as this page sees it. */
 export interface ResolvedCurrentSession {
   readonly sessionId: string | null
@@ -393,6 +397,48 @@ export function resolveCurrentSession(source: CurrentSessionSource): ResolvedCur
     }
   }
   return { sessionId: null, title: null, reader: -1 }
+}
+
+/**
+ * How many session rows the `sessions.list` snapshot is currently holding.
+ *
+ * Evidence, not behaviour: a page that can see 152 sessions and still cannot
+ * name the current one is drifting, while an empty list only means no session
+ * exists yet. Those two readings are indistinguishable from `reader` alone,
+ * which is why the count travels with it. Reads nothing else, and never throws.
+ *
+ * @param source - the same source `resolveCurrentSession()` was given.
+ * @returns the number of `byId` entries, or 0 when there is no readable list.
+ */
+export function byIdCount(source: CurrentSessionSource): number {
+  try {
+    const byId = sessionList(source.sessions)?.byId
+    if (typeof byId !== 'object' || byId === null) return 0
+    return Object.keys(byId).length
+  } catch {
+    return 0
+  }
+}
+
+/**
+ * Human-readable name of the read that answered.
+ *
+ * The index is the machine signal; this is what makes a `/state` snapshot or a
+ * probe line readable without keeping §5.2's table open. `-1` names the failure
+ * itself rather than a source, because "all four reads missed" is a fact about
+ * the chain and not about any one read.
+ *
+ * @param reader - a hit index from `resolveCurrentSession()`.
+ * @returns a fixed label; never throws and never varies between runs.
+ */
+export function readerReason(reader: SessionReaderIndex): string {
+  switch (reader) {
+    case 0: return 'uiSession.adapter.current'
+    case 1: return 'uiSession.current'
+    case 2: return 'sessions.list.current'
+    case 3: return 'sessions.list.byId.retainedBy'
+    default: return 'no-read-answered'
+  }
 }
 
 /** Narrow an unknown value to a readable observable, or null. */

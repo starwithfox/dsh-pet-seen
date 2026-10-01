@@ -7,8 +7,9 @@
  * and the `/state` snapshot agree with each other.
  *
  * The harness itself *is* stubbed (a fake context replays `session/event` and
- * `agent/status`), so this half stays verifiable without a running DSH. Wiring
- * the same code to a real DSH is the P0 verification step recorded in
+ * `agent/status`, and the optional WebServer arrives as a double when a case asks
+ * for one), so this half stays verifiable without a running DSH. Wiring the same
+ * code to a real DSH is the P0 verification step recorded in
  * DELIVERY-ROUND1.md.
  */
 import assert from 'node:assert/strict'
@@ -18,8 +19,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, before, describe, it } from 'node:test'
 import { bridge } from './harness.js'
+import { fakeWebServer } from './web-server-fixture.js'
+import type { FakeWebServer } from './web-server-fixture.js'
 
-const { PROTOCOL_VERSION, apply } = bridge
+const { BROWSER_ROUTES, PROTOCOL_VERSION, apply } = bridge
 
 /** A fake pet: a listener that records whatever the plugin pushes at it. */
 interface FakePet {
@@ -110,6 +113,13 @@ interface Harness {
   readonly emitAgentError: (payload: unknown) => void
   readonly controlPort: number
   readonly token: string
+  /**
+   * The mounted browser routes, or null for the default headless shape.
+   *
+   * Only a case that asked for `browserRoutes: true` gets one; the rest of the
+   * suite pins the headless shape, where the optional injection must not fire.
+   */
+  readonly browser: FakeWebServer | null
   readonly dispose: () => void
 }
 
@@ -130,13 +140,20 @@ interface Harness {
  * fix, and `tests/credentials.test.ts` pins the rule.
  *
  * @param petPort - port of the fake pet.
+ * @param options - `browserRoutes` mounts the real browser routes against a
+ *   WebServer double. Off by default: the headless shape is what most of this
+ *   suite is about, and `assert.equal(empty.body?.browserRoutes, false)` pins it.
  * @returns captured listeners plus the bound control endpoint.
  */
-async function startPlugin(petPort: number): Promise<Harness> {
+async function startPlugin(
+  petPort: number,
+  options: { browserRoutes?: boolean } = {},
+): Promise<Harness> {
   let sessionEvent: Harness['emitSessionEvent'] | null = null
   let agentStatus: Harness['emitAgentStatus'] | null = null
   let agentError: Harness['emitAgentError'] | null = null
   const disposers: Array<() => void | Promise<void>> = []
+  const browser = options.browserRoutes === true ? fakeWebServer() : null
   const scratch = mkdtempSync(join(tmpdir(), 'dsh-pet-bridge-integration-'))
   const tokenFile = join(scratch, 'pet-bridge.json')
   let resolveBound: (bound: { port: number, token: string }) => void = () => {}
@@ -162,9 +179,21 @@ async function startPlugin(petPort: number): Promise<Harness> {
       get: (name: string) => unknown
       effect: (cb: () => (() => void | Promise<void>) | void) => unknown
     }) => void) => {
-      // The tests exercise the headless shape: no WebServer service exists, so
-      // the optional browser-route injection must simply not fire.
-      if (names.includes('webServer')) return
+      // The tests exercise the headless shape by default: no WebServer service
+      // exists, so the optional browser-route injection must simply not fire.
+      // A case that is about the routes asks for the double explicitly.
+      if (names.includes('webServer')) {
+        if (browser === null) return
+        callback({
+          get: (name: string) => (name === 'webServer' ? browser.face : undefined),
+          effect: (cb) => {
+            const disposer = cb()
+            if (typeof disposer === 'function') disposers.push(disposer)
+            return () => {}
+          },
+        })
+        return () => {}
+      }
       callback({
         get: () => undefined,
         effect: (cb) => {
@@ -225,6 +254,7 @@ async function startPlugin(petPort: number): Promise<Harness> {
     },
     controlPort: endpoint.port,
     token: endpoint.token,
+    browser,
     dispose: () => {
       for (const disposer of disposers.splice(0)) void disposer()
       rmSync(scratch, { recursive: true, force: true })
@@ -322,6 +352,79 @@ describe('loopback integration', () => {
       const badMethod = await fetch(`http://127.0.0.1:${harness.controlPort}/hello`)
       assert.equal(badMethod.status, 405)
       await badMethod.text()
+    } finally {
+      harness.dispose()
+    }
+  })
+
+  /*
+   * The one end-to-end claim the route tests cannot make: the diagnostics a page
+   * sends reach `GET /state`, through the real `apply()` wiring and the real
+   * control listener, rather than only out of `BrowserRoutes.diagnostics()`.
+   *
+   * Both carriers are exercised here, because they answer different questions:
+   * a named session carries the read as a session fact, and a page that named
+   * none — the drift case — can only appear in `browserTabs`.
+   */
+  it('publishes a page\'s session-read diagnostics in /state', async () => {
+    const harness = await startPlugin(pet.port, { browserRoutes: true })
+    try {
+      assert.ok(harness.browser !== null, 'the browser routes were mounted')
+      const empty = await controlGet(harness.controlPort, '/state', harness.token)
+      assert.equal(empty.body?.browserRoutes, true)
+      assert.deepEqual(empty.body?.browserTabs, [], 'no page has reported yet')
+
+      const blind = await harness.browser.call({
+        method: 'POST',
+        path: BROWSER_ROUTES.visibility,
+        body: {
+          v: PROTOCOL_VERSION,
+          tabId: 'tab-1',
+          sessionId: null,
+          visible: true,
+          focused: true,
+          reader: -1,
+          readerReason: 'no-read-answered',
+          byIdCount: 152,
+        },
+      })
+      assert.equal(blind.status, 200)
+
+      const afterBlind = await controlGet(harness.controlPort, '/state', harness.token)
+      const tabs = afterBlind.body?.browserTabs as Array<Record<string, unknown>>
+      assert.equal(tabs.length, 1)
+      assert.equal(tabs[0]?.tabId, 'tab-1')
+      assert.equal(tabs[0]?.sessionId, null)
+      assert.equal(tabs[0]?.reader, -1)
+      assert.equal(tabs[0]?.readerReason, 'no-read-answered')
+      assert.equal(tabs[0]?.byIdCount, 152)
+      // Nothing to attach a session fact to, so nothing is invented.
+      assert.deepEqual(afterBlind.body?.sessions, [])
+
+      const named = await harness.browser.call({
+        method: 'POST',
+        path: BROWSER_ROUTES.visibility,
+        body: {
+          v: PROTOCOL_VERSION,
+          tabId: 'tab-2',
+          sessionId: 'session-1',
+          visible: true,
+          focused: true,
+          title: 'a session',
+          reader: 0,
+          readerReason: 'uiSession.adapter.current',
+          byIdCount: 3,
+        },
+      })
+      assert.equal(named.status, 200)
+
+      const afterNamed = await controlGet(harness.controlPort, '/state', harness.token)
+      const sessions = afterNamed.body?.sessions as Array<Record<string, unknown>>
+      assert.equal(sessions[0]?.sessionId, 'session-1')
+      assert.equal(sessions[0]?.title, 'a session')
+      assert.equal(sessions[0]?.reader, 0)
+      const bothTabs = afterNamed.body?.browserTabs as Array<Record<string, unknown>>
+      assert.deepEqual(bothTabs.map(tab => tab.tabId).sort(), ['tab-1', 'tab-2'])
     } finally {
       harness.dispose()
     }

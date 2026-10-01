@@ -12,6 +12,13 @@
  * browser bundle re-exports parts of this file, and the client build must not
  * pull Node builtins into the page.
  *
+ * **What counts as a version bump.** Everything the pet parses — events,
+ * `/hello`, `/ack`, `/state` — is a wire contract with a second implementation
+ * in `pet.py`, so a change there has to bump {@link PROTOCOL_VERSION}. An
+ * additive *optional* field on a browser-only route is not that: the pet never
+ * reads `/pet-bridge/visibility`, and no participant can observe the addition
+ * except the host. Those stay on v1 (see {@link VisibilityRequest.reader}).
+ *
  * @module dsh-pet-bridge/protocol
  */
 
@@ -38,6 +45,15 @@ export const MAX_TITLE_LENGTH = 160
 
 /** Cap on any human-readable one-liner before it reaches the wire. */
 export const MAX_MESSAGE_LENGTH = 240
+
+/**
+ * Cap on the reported `sessions.list.byId` size.
+ *
+ * A diagnostic bound, not a correctness one: the number is only ever printed, so
+ * it is clamped to keep an absurd value out of the snapshot instead of out of
+ * the page.
+ */
+export const MAX_BY_ID_COUNT = 10_000
 
 /**
  * Normalized event names. These are semantics, not raw harness event names:
@@ -133,6 +149,58 @@ export interface NoticeSnapshot {
   readonly delivered: boolean
 }
 
+/**
+ * Which of the client's four session reads answered.
+ *
+ * The chain itself lives in `src/client/decide.ts`; the index travels to the
+ * host as a **drift signal** (the self-check of `FIX-DESIGN` §5.5). `-1` means
+ * no read answered at all, which is the state the whole self-check exists for:
+ * on 0.2.0-rc.2 the same condition silently produced no notice retraction and
+ * left no trace anywhere.
+ */
+export type SessionReaderIndex = 0 | 1 | 2 | 3 | -1
+
+/**
+ * Type guard for a value usable as a {@link SessionReaderIndex}.
+ *
+ * Deliberately strict, because the value arrives from a page: `"0"`, `1.5`, `-2`
+ * and `4` are all dropped rather than coerced, so a malformed report degrades to
+ * "no diagnostic" instead of inventing one.
+ *
+ * @param value - candidate value from a request body.
+ * @returns true when the value is one of the five valid indices.
+ */
+export function isReaderIndex(value: unknown): value is SessionReaderIndex {
+  return typeof value === 'number'
+    && Number.isInteger(value)
+    && value >= -1
+    && value <= 3
+}
+
+/**
+ * What one browser tab last reported about its own session read.
+ *
+ * This lives outside {@link SessionProgressSnapshot} on purpose: the most
+ * important reading is `reader === -1`, i.e. "no session was found", and a
+ * per-session row cannot carry a diagnostic for a session that was never named.
+ * Rows are bounded by the lease table they are derived from, so they disappear
+ * with the tab's focus lease instead of accumulating.
+ */
+export interface TabDiagnostic {
+  /** Opaque per-tab-instance id, the same one the page keys its lease with. */
+  readonly tabId: string
+  /** The session that tab named, or null when it named none. */
+  readonly sessionId: string | null
+  /** Last reported hit index, or null when the tab never sent one. */
+  readonly reader: SessionReaderIndex | null
+  /** Last reported read name, or null. */
+  readonly readerReason: string | null
+  /** Last reported `byId` size, or null. */
+  readonly byIdCount: number | null
+  /** Epoch ms of that tab's last visibility report. */
+  readonly at: number
+}
+
 /** Per-session progress bucket. One entry per root session, never a global state. */
 export interface SessionProgressSnapshot {
   readonly sessionId: string
@@ -150,6 +218,14 @@ export interface SessionProgressSnapshot {
   readonly completedTodoCount: number
   readonly percent: number | null
   readonly updatedAt: number
+  /**
+   * Which page read answered for this session, as last reported.
+   *
+   * Absent until a page has reported one, and only ever set for a session that
+   * was actually named — the `-1` reading has no session to attach to and is
+   * carried by {@link StatePayload.browserTabs} instead.
+   */
+  readonly reader?: SessionReaderIndex
 }
 
 /** `GET /state` response body. */
@@ -163,6 +239,20 @@ export interface StatePayload {
   readonly petPort: number | null
   /** Whether the browser route half is mounted (the DSH WebServer is present). */
   readonly browserRoutes: boolean
+  /**
+   * Per-tab session-read diagnostics, most recent report first.
+   *
+   * Empty when no page has reported, including every headless host. This is the
+   * only place a `reader === -1` reading can appear: the per-session field needs
+   * a session, and "none of the four reads answered" is exactly the case where
+   * there is none — which is why the field is separate rather than optional on
+   * {@link SessionProgressSnapshot}.
+   *
+   * Deliberately **not** revision-tracked: it is rewritten on every lease
+   * refresh (about every five seconds per visible tab) and would otherwise make
+   * `revision` churn while no session, run or notice had changed at all.
+   */
+  readonly browserTabs: readonly TabDiagnostic[]
 }
 
 /** `POST /hello` request body from the pet. */
@@ -211,6 +301,19 @@ export interface VisibilityRequest {
   readonly focused: boolean
   /** Optional session title from the client snapshot (host stores it verbatim). */
   readonly title?: string | null
+  /**
+   * Which of the client's four reads answered (the drift signal, §5.5).
+   *
+   * Sent on **every** report, including the ones where no session was found:
+   * `-1` is the reading worth keeping. Diagnostics only — nothing here can mark
+   * a notice seen, and the pet never reads this route, which is why the fields
+   * are additive on v1 rather than a protocol bump.
+   */
+  readonly reader?: SessionReaderIndex
+  /** Human-readable name of that read; a bounded one-liner, not parsed. */
+  readonly readerReason?: string
+  /** Size of `sessions.list.byId` when the report was made. */
+  readonly byIdCount?: number
 }
 
 /** One notice the browser is asked to watch for. */
