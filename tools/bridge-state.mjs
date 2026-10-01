@@ -14,6 +14,10 @@
  *     named the session" can be quoted the same way. This is one of the two
  *     readers of the drift self-check (`FIX-DESIGN` §5.5); `probe-http.mjs` is
  *     the other, and it is the one that turns drift into a failing exit code.
+ *     These rows are *live* — each expires with its tab's lease, and the page
+ *     renews that lease only while it is visible and focused — so unlike
+ *     `reader` on the session lines they can legitimately be absent, and their
+ *     absence is printed rather than silently omitted.
  *
  * Read-only. Exits 1 when `/state` cannot be read.
  *
@@ -58,6 +62,17 @@ if (state !== null) {
       + `${session.reader === undefined ? '' : ` reader=${session.reader}`}`)
   }
   const tabs = Array.isArray(state.browserTabs) ? state.browserTabs : []
+  if (tabs.length === 0) {
+    /*
+     * Say so instead of printing nothing: a silent absence was indistinguishable
+     * from "the host half is still the previous build" (which also served no
+     * `browserTabs`). This list is live — a row expires with its tab's lease,
+     * and the page renews that only while visible and focused — whereas `reader`
+     * on the session lines above is written into the session fact and persists.
+     */
+    console.log('(no live tab diagnostic: nothing has reported yet, or the last report aged out of the'
+      + ' lease TTL — the page renews it only while visible and focused)')
+  }
   for (const tab of tabs) {
     console.log(`tab ${short(tab.tabId)} reader=${tab.reader ?? '-'} (${tab.readerReason ?? '-'})`
       + ` byId=${tab.byIdCount ?? '-'} session=${short(tab.sessionId)}`

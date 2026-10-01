@@ -22,7 +22,10 @@
  *      the drift self-check of `FIX-DESIGN` §5.5, and this probe is one of the
  *      two readers that are supposed to notice: a tab that can see sessions but
  *      names none (`reader === -1`) fails the run, and a tab answering from a
- *      fallback read prints a warning without failing.
+ *      fallback read prints a warning without failing. `browserTabs` is a
+ *      *live* channel — a row expires with its tab's lease — so the durable
+ *      reading is `sessions[].reader`, and an empty `browserTabs` is reported
+ *      as the ambiguity it is rather than as "nothing has reported yet".
  *
  * Read-only: it starts nothing and changes nothing. Exit code is 1 when any
  * fetched asset failed **or** the control plane is unhealthy, so it can be used
@@ -61,7 +64,10 @@ console.log(`[probe] cookie ${splitCookie(cookie).name}`)
 
 /** Enough of an opaque id to match it between two lines of output. */
 const shortId = (value) => {
-  const text = String(value ?? '-')
+  // Strip the `session-` prefix first: without it every session id shortens to
+  // the useless literal `session-`, and the tab's `session=` can no longer be
+  // matched against the session lines above it. `bridge-state.mjs` agrees.
+  const text = String(value ?? '-').replace(/^session-/, '')
   return text.length > 8 ? text.slice(0, 8) : text
 }
 
@@ -156,7 +162,18 @@ if (WEB_ONLY) {
      */
     const tabs = Array.isArray(state?.browserTabs) ? state.browserTabs : []
     if (tabs.length === 0) {
-      console.log('  (no browser tab has reported a session read yet)')
+      /*
+       * Emptiness here is ambiguous, and reporting it as one specific thing was
+       * a real misread: this list is a *live* channel. The host drops a row once
+       * the tab's lease ages out (`DEFAULT_LEASE_TTL_MS`), and the client
+       * renews that lease only while the page is visible **and** focused — so
+       * "nothing here" is either "nothing has reported yet" or "the page lost
+       * focus more than the lease window ago". It is deliberately not a
+       * failure: the durable reading is `sessions[].reader`, printed above.
+       */
+      console.log('  (no live tab diagnostic: nothing has reported yet, OR the last report aged out of the'
+        + ' host lease TTL — the page renews it only while visible and focused, so re-run with the app window'
+        + ' focused. Judge `reader` by the session lines above, which persist.)')
     }
     for (const tab of tabs) {
       console.log(`  tab ${shortId(tab.tabId)} reader=${tab.reader ?? '-'} (${tab.readerReason ?? '-'})`
