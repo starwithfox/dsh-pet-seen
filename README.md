@@ -114,16 +114,20 @@ Harness 的 HTTP 命名空间。独立控制端口的好处：
 ## 3. 安装
 
 ```powershell
-# 1. 构建（产物：lib/index.js 宿主侧、client/client.js 浏览器侧）
-cd dsh-plugin
-npm install
-npm run build
+# 1. 装进 web profile（本地目录直装，不走 registry）
+#    把 <克隆目录> 换成你自己的路径
+dsh plugin add --profile web file:<克隆目录>\dsh-plugin
 
-# 2. 装进 web profile（本地目录直装，不走 registry）
-dsh plugin add --profile web file:C:\Users\star_fox\.dsh\source\deepseek-harness-pet-main\dsh-plugin
-
-# 3. 重启 DSH 才会加载（这一步会中断正在运行的会话）
+# 2. 重启 DSH 才会加载（这一步会中断正在运行的会话）
 ```
+
+> **克隆后不需要构建**：`lib/index.js`（宿主侧）与 `client/client.js`（浏览器侧）两个产物**已入库**，
+> 装的过程也不需要 Node.js 或任何工具链。
+>
+> **只有改了 `src/` 才需要构建**（需要 Node 22+）：`cd dsh-plugin` → `npm install` → `npm run build`。
+> 改完必须**把 `src/` 与重建后的产物一起提交**——`npm run check` 会先 `build`、再比对 HEAD 里的产物，
+> 改了源码却没把产物一起提交就会红；`prepack` 在 `npm pack` / `npm publish` 前自动重建兜底。
+> 产物由 tsdown 生成，**不要手改**。
 
 > `dsh plugin` 只是 pnpm 的一层封装：`add` 不会热加载已运行的宿主。
 > 开发时可用 `dsh plugin add --profile web link:<绝对路径>` 建软链，改完重建 + 重启即可。
@@ -293,14 +297,29 @@ v1 **只发**：事件名、`sessionId`、会话标题（可关、截断 160）�
 ## 5. 开发
 
 ```powershell
-npm run typecheck     # 对着本机运行中的 DSH 类型检查（见下）
-npm test              # 编译测试 + 跑全部单测/集成测试（末行打印实测条数）
-npm run build         # 两个 bundle
-npm run smoke:bundle  # 加载真实产物，校验 bundle 纯净性与 manifest
-npm run roundtrip     # 离线跑通全链路（不碰运行中的 DSH）
-npm run mock-pet      # 假桌宠：收事件 + 交互 ack（seen/dismiss/state/quit）
-npm run check         # 以上全部
+npm run typecheck       # 对着本机运行中的 DSH 类型检查（见下）
+npm test                # 编译测试 + 跑全部单测/集成测试（末行打印实测条数）
+npm run build           # 两个 bundle（lib/index.js、client/client.js）
+npm run smoke:bundle    # 加载真实产物，校验 bundle 纯净性与 manifest
+npm run check:artifacts # 判定「HEAD 里的产物 = 源码产物」（在 build 之后跑）
+npm run roundtrip       # 离线跑通全链路（不碰运行中的 DSH）
+npm run mock-pet        # 假桌宠：收事件 + 交互 ack（seen/dismiss/state/quit）
+npm run check           # 以上全部（含产物一致性闸门）
 ```
+
+### 产物入库与一致性闸门
+
+`lib/`（宿主侧）与 `client/`（浏览器侧）**入库**，克隆即可安装（见 §3）。代价是必须保证
+"提交的产物 = 源码产物"，这条靠机制而不是靠人记得：
+
+- `npm run check:artifacts` = `git diff --exit-code HEAD -- lib client`，**在 `build` 之后跑才有意义**：
+  它比的是"刚从 `src/` 重建出来的产物"与"HEAD 里那份"。**红 ⇒ 当前源码的产物还没进 HEAD**
+  （改了 `src/` 却没连产物一起提交；产物被手改也在这里被抓）。**绿 ⇒ HEAD 里的产物就是当前源码的产物**。
+- `npm run check` 已把它串在 `build` 与 `test` 之间（顺序就是这个前提）⇒ 今后"`check` 全绿"**同时**
+  证明产物与源码一致；也因为入库了，`git status` 干净才真的能说明"机器上加载的就是仓库里那份"。
+- 改了 `src/` 的提交**必须**带重建后的产物；`prepack` 保证 `npm pack` / `npm publish` 前先重建。
+- `lib/types/*.d.ts` **已删除**：本包**不发布类型**（`tsconfig.types.json` 明文 `noEmit`、`exports` 里
+  也没有 `types` 条件），那 6 个文件是 2026-09-24 旧构建的残留，却会被 `files: ["lib"]` 整目录打进包里。
 
 ### 类型检查对着**活的** DSH
 
@@ -373,7 +392,11 @@ dsh-plugin/
 ├── tsconfig.client.json  # DOM 侧
 ├── tsconfig.test.json    # 测试（含 paths 映射）
 ├── tsconfig.host.json    # 给 tsdown 的 noCheck 配置
-├── tsconfig.types.json   # Harness-free 基线
+├── tsconfig.types.json   # Harness-free 基线（`noEmit`：本包不发射 .d.ts）
+├── lib/                  # 【入库】宿主侧产物（tsdown 生成，勿手改）
+│   └── index.js
+├── client/               # 【入库】浏览器侧产物（tsdown 生成，勿手改）
+│   └── client.js
 ├── src/
 │   ├── index.ts          # apply(ctx, config)：订阅、控制服务、推送、可选浏览器路由
 │   ├── pins.ts           # 唯一引用 DSH 内部类型的模块：faces + 编译期锚点 + 其机制

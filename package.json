@@ -43,6 +43,7 @@
   },
   "scripts": {
     "build": "tsdown",
+    "prepack": "npm run build",
     "typecheck": "tsc -p tsconfig.check.json && tsc -p tsconfig.client.json && tsc -p tsconfig.test.json --noEmit",
     "compat:0.2.0": "tsc -p tsconfig.compat-0.2.0.json",
     "build:test": "tsc -p tsconfig.test.json",
@@ -52,7 +53,8 @@
     "auth:check": "node tools/check-browser-auth.mjs",
     "probe:http": "node tools/probe-http.mjs",
     "acceptance": "node tools/cdp-acceptance.mjs",
-    "check": "npm run typecheck && npm run build && npm run smoke:bundle && npm test",
+    "check:artifacts": "git diff --exit-code HEAD -- lib client",
+    "check": "npm run typecheck && npm run build && npm run smoke:bundle && npm run check:artifacts && npm test",
     "mock-pet": "node tools/mock-pet.mjs"
   },
   "peerDependencies": {
