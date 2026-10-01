@@ -483,7 +483,7 @@ export function apply(ctx: ClientContext): void {
     // the same answer for a switch that somehow arrived without one. Kept on
     // record as not being pinned by a failing case, and kept anyway: the measured
     // cost is one snapshot read per settled notice, far below the POST it follows.
-    // See the "性能实测" section of `working-docs/IMPL-LOG-SESSION-CURRENT-2026-10-01.md`.
+    // See the "性能实测" section of `working-docs/IMPL-LOG-SESSION-CURRENT.md`.
     if (disposed || gen !== generation || currentSessionId !== sessionId) return
     const afterPost = snapshot()
     if (disposed || afterPost.sessionId !== sessionId) {
