@@ -9,7 +9,10 @@
  *
  * 1. Learns the session the user is actually looking at — `uiSession` when the
  *    runtime has it, the `sessions` service as the fallback — and keeps the
- *    host's per-tab focus lease fresh.
+ *    host's per-tab focus lease fresh. Every actual switch bumps a generation,
+ *    so a `notices` or `seen` result that lands after the user has moved on is
+ *    dropped rather than applied to the session they left; following the source
+ *    with `subscribe` only makes the switch noticed sooner.
  * 2. Asks the host which notices are still unconfirmed for that session.
  * 3. Watches the finished turn through the L1→L3 ladder in `visibility.ts`, and
  *    reports `/seen` only when L3 holds — refreshing the focus lease first, so a
@@ -26,12 +29,13 @@ import type { NoticesPayload, PendingNotice, SeenResponse } from '../protocol.js
 import {
   classifySeenOutcome,
   createAttemptGate,
+  currentSessionObservable,
   resolveCurrentSession,
   resolveDwellMs,
   selectWatchTarget,
   watchableCandidates,
 } from './decide.js'
-import type { ResolvedCurrentSession, SessionsFace } from './decide.js'
+import type { ObservableView, ResolvedCurrentSession, SessionsFace } from './decide.js'
 import { VisibilityTracker, createVisibilityDeps } from './visibility.js'
 
 /** Services this half needs. These are runtime package names, not values. */
@@ -192,6 +196,20 @@ export function apply(ctx: ClientContext): void {
   let pending: PendingNotice[] = []
   let currentSessionId: string | null = null
   let disposed = false
+  /**
+   * Bumped whenever the current session actually changes.
+   *
+   * This is the invariant of `FIX-DESIGN` §5.1.4: a switch invalidates every
+   * previous observation immediately. An async result that was launched for the
+   * old session must therefore not be allowed to write state when it lands, and
+   * comparing this counter is what makes that true. Following the source below
+   * only narrows the window in which a switch is *noticed* — the counter is what
+   * keeps a late response harmless even with no subscription at all.
+   */
+  let generation = 0
+  /** The source currently followed, and how to stop following it. */
+  let subscribedTo: ObservableView<unknown> | null = null
+  let unsubscribeSource: (() => void) | null = null
 
   /**
    * Read `uiSession` reflectively, on every call.
@@ -213,8 +231,9 @@ export function apply(ctx: ClientContext): void {
   /**
    * The session the user is looking at, its title, and which read found it.
    *
-   * `reader` is carried through for the drift self-check; nothing consumes it
-   * yet, and a failure here is an ordinary "no current session" (invariant: the
+   * `reader` names which read answered, and is consumed twice: to pick the
+   * source worth following (below) and, from step 5 on, as the drift signal
+   * reported upstream. A failure here is an ordinary "no current session" (invariant: the
    * page never breaks because of this plugin).
    */
   const snapshot = (): ResolvedCurrentSession => {
@@ -243,10 +262,86 @@ export function apply(ctx: ClientContext): void {
     unref(refreshTimer)
   }
 
+  /**
+   * React to the followed source changing.
+   *
+   * Only an *actual* change clears anything. These observables also emit for
+   * row-level edits — a title, a `running` flag — and treating every emission as
+   * a switch would throw away the pending notices the user is still looking at.
+   * `syncSession` is idempotent, so an emission that did not move the session
+   * costs one snapshot read and one coalesced re-query.
+   */
+  const onSessionSourceChange = (): void => {
+    syncSession()
+    scheduleRefresh()
+  }
+
+  /**
+   * Follow the source the winning read came from, so a switch is noticed in
+   * milliseconds instead of at the next poll.
+   *
+   * Re-binding is identity-based: when the service is replaced (a reload hands
+   * us a new `uiSession`, or the winning read moves to another source) the old
+   * subscription is dropped and the new object is followed. A source without
+   * `subscribe`, or none at all, is not a problem — the generation check in
+   * `refreshNotices()` / `reportSeen()` has to hold either way.
+   *
+   * @param resolved - the session image whose `reader` won the chain.
+   */
+  const bindSessionSubscription = (resolved: ResolvedCurrentSession): void => {
+    if (resolved.reader === -1) return
+    const observable = currentSessionObservable(
+      { uiSession: readUiSession(), sessions: ctx.sessions },
+      resolved.reader,
+    )
+    if (observable === null || observable === subscribedTo) return
+    if (typeof observable.subscribe !== 'function') return
+    unsubscribeSource?.()
+    subscribedTo = observable
+    try {
+      unsubscribeSource = observable.subscribe(() => { onSessionSourceChange() }) ?? null
+    } catch {
+      // A source that refuses to be observed still answers reads; the poll and
+      // the generation check carry the correctness on their own.
+      subscribedTo = null
+      unsubscribeSource = null
+    }
+  }
+
+  /**
+   * Bring the page's idea of the current session up to date, bumping the
+   * generation when it actually moved.
+   *
+   * One place owns both, because the previous code wrote `currentSessionId` from
+   * two directions — `reportVisibility()` unconditionally, `refreshNotices()` in
+   * its switch guard — and a switch could therefore be missed: the visibility
+   * path set the id first, and the guard that was supposed to clear the watch
+   * state then saw no change at all.
+   *
+   * @param resolved - a snapshot the caller already took, to avoid reading twice.
+   * @returns the session image now in force.
+   */
+  const syncSession = (resolved: ResolvedCurrentSession = snapshot()): ResolvedCurrentSession => {
+    if (resolved.sessionId !== currentSessionId) {
+      generation += 1
+      currentSessionId = resolved.sessionId
+      // Everything observed belongs to the session the user has left. Clearing
+      // `blocked` and `attempts` is deliberate: they are per-page bookkeeping
+      // about a session that is no longer on screen, and the host list is the
+      // authority again for the new one.
+      pending = []
+      blocked.clear()
+      attempts.clear()
+      tracker.setTarget(null)
+      log(`current session is now ${resolved.sessionId ?? 'none'}`)
+    }
+    bindSessionSubscription(resolved)
+    return resolved
+  }
+
   /** Send the current L1/L2 state so the host can maintain this tab's lease. */
   const reportVisibility = async (): Promise<void> => {
-    const { sessionId, title } = snapshot()
-    currentSessionId = sessionId
+    const { sessionId, title } = syncSession()
     await postJson(BROWSER_ROUTES.visibility, {
       v: PROTOCOL_VERSION,
       tabId: id,
@@ -271,18 +366,14 @@ export function apply(ctx: ClientContext): void {
 
   /** Pull the unconfirmed notices for the current session. */
   const refreshNotices = async (): Promise<void> => {
-    const { sessionId } = snapshot()
+    const { sessionId } = syncSession()
+    const gen = generation
     if (sessionId === null) {
+      // Nothing to ask about, and any request already in flight was voided by
+      // the generation bump `syncSession` just made.
       pending = []
       tracker.setTarget(null)
       return
-    }
-    if (sessionId !== currentSessionId) {
-      // A session switch invalidates every previous observation immediately.
-      currentSessionId = sessionId
-      blocked.clear()
-      attempts.clear()
-      tracker.setTarget(null)
     }
     lastRefreshAt = Date.now()
     try {
@@ -292,6 +383,22 @@ export function apply(ctx: ClientContext): void {
       )
       if (!response.ok) return
       const payload = await response.json() as NoticesPayload
+      // The invariant (FIX-DESIGN §5.1.4): a response is only good while nothing
+      // moved. The generation catches a switch this page already noticed (by
+      // subscription, event or timer); re-reading the source catches the one
+      // that happened while this request was in flight and that no event has
+      // observed yet. Either way the stale body must not touch `pending`, the
+      // watch target, or the dwell threshold — it describes a session the user
+      // has left. Re-syncing here adopts the new session straight away, and the
+      // immediate re-query keeps it from waiting for the next poll.
+      const current = snapshot()
+      if (disposed || gen !== generation || current.sessionId !== sessionId) {
+        if (!disposed && current.sessionId !== sessionId) {
+          syncSession(current)
+          scheduleRefresh()
+        }
+        return
+      }
       pending = Array.isArray(payload.notices) ? payload.notices : []
       // The host owns the threshold; validate it and restart the clock when it
       // changes, so a slow dwell can never be defeated by time banked under the
@@ -313,12 +420,22 @@ export function apply(ctx: ClientContext): void {
    * The focus lease is refreshed first: coming back from another window, the
    * host may still be holding the `focused: false` report the page sent on the
    * way out, and reporting against it is refused for a lease that is merely old.
+   * That refresh is also the one await in which the user can leave the session,
+   * so the generation is captured before it and re-checked after.
    */
   const reportSeen = async (noticeId: string, sessionId: string): Promise<void> => {
     const notice = pending.find(candidate => candidate.noticeId === noticeId)
     if (notice === undefined) return
     attempts.remember(noticeId, Date.now())
+    const gen = generation
     await reportVisibility()
+    if (disposed || gen !== generation || currentSessionId !== sessionId) {
+      // The user has left this session. Say nothing to the host, count no
+      // failure, and do not re-arm: the observation is not wrong, it is simply
+      // no longer about anything on screen. (`attempts` was cleared by the same
+      // switch, so the remembered attempt costs nothing either.)
+      return
+    }
     const response = await postJson(BROWSER_ROUTES.seen, {
       v: PROTOCOL_VERSION,
       noticeId,
@@ -327,6 +444,12 @@ export function apply(ctx: ClientContext): void {
       tabId: id,
       observed: true,
     })
+    // The POST is a second await, and landing an old session's verdict on the
+    // new session's state is exactly the kind of cross-talk this guards: a
+    // `retarget(sessionId)` with the old id would tag a new session's notice as
+    // the old one's, and the host's `session-mismatch` refusal would then
+    // blacklist it for the life of the page.
+    if (disposed || gen !== generation || currentSessionId !== sessionId) return
     const outcome = classifySeenOutcome(
       (response as SeenResponse | null)?.accepted === true,
       (response as SeenResponse | null)?.reason,
@@ -428,6 +551,9 @@ export function apply(ctx: ClientContext): void {
 
     return () => {
       disposed = true
+      unsubscribeSource?.()
+      unsubscribeSource = null
+      subscribedTo = null
       clearInterval(leaseTimer)
       clearInterval(noticeTimer)
       clearInterval(dwellTimer)

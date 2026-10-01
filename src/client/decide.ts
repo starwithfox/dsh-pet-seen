@@ -256,9 +256,15 @@ export interface SessionsListSnapshot {
   byId: Record<string, SessionRow | undefined>
 }
 
-/** The client `sessions` service slice this plugin reads. */
+/**
+ * The client `sessions` service slice this plugin reads.
+ *
+ * `list` is declared as the observable it is rather than as a bare getter: reads
+ * 2 and 3 answer from this one source, so this is also the object a session
+ * switch is noticed through.
+ */
 export interface SessionsFace {
-  list: { getSnapshot(): SessionsListSnapshot }
+  list: ObservableView<SessionsListSnapshot>
 }
 
 /** Which read in the chain produced the session id; `-1` when none did. */
@@ -387,4 +393,44 @@ export function resolveCurrentSession(source: CurrentSessionSource): ResolvedCur
     }
   }
   return { sessionId: null, title: null, reader: -1 }
+}
+
+/** Narrow an unknown value to a readable observable, or null. */
+function observableOf(value: unknown): ObservableView<unknown> | null {
+  if (typeof value !== 'object' || value === null) return null
+  return typeof (value as { getSnapshot?: unknown }).getSnapshot === 'function'
+    ? value as ObservableView<unknown>
+    : null
+}
+
+/**
+ * Which observable to follow so a session change is noticed without polling.
+ *
+ * `resolveCurrentSession()` answers *which* session is current and reports the
+ * hit index; this answers the separate question of *what to subscribe to* for
+ * that hit. Reads 2 and 3 share one source (`sessions.list`) and therefore one
+ * subscription; reads 0 and 1 each name their own observable (`FIX-DESIGN`
+ * §5.2). Nothing here subscribes — observation is the caller's, the same split
+ * as everywhere else in this module — and nothing throws: an unreachable source,
+ * or a `-1` hit, means "no observable to follow". A missing subscription is
+ * never a correctness problem, only a slower notice of the switch.
+ *
+ * @param source - the same source `resolveCurrentSession()` was given.
+ * @param reader - the hit index that function returned.
+ * @returns the observable the hit index came from, or null when there is none.
+ */
+export function currentSessionObservable(
+  source: CurrentSessionSource,
+  reader: SessionReaderIndex,
+): ObservableView<unknown> | null {
+  try {
+    if (reader === 0 || reader === 1) {
+      const ui = source.uiSession as UiSessionFace | undefined
+      return observableOf(reader === 0 ? ui?.adapter?.current : ui?.current)
+    }
+    if (reader === 2 || reader === 3) return observableOf(source.sessions?.list)
+    return null
+  } catch {
+    return null
+  }
 }

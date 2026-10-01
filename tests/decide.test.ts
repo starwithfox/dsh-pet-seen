@@ -14,6 +14,7 @@ import {
   TERMINAL_SEEN_REASONS,
   classifySeenOutcome,
   createAttemptGate,
+  currentSessionObservable,
   resolveCurrentSession,
   resolveDwellMs,
   selectWatchTarget,
@@ -297,5 +298,55 @@ describe('session current: which of the four reads answers', () => {
       resolveCurrentSession({ uiSession: { adapter: { current: viewOf('lonely') } } }),
       { sessionId: 'lonely', title: null, reader: 0 },
     )
+  })
+})
+
+/* -------------------------------------------------------------------------- *
+ * Which source a switch is noticed through.
+ *
+ * This is the other half of the chain: `resolveCurrentSession()` says *which*
+ * session is current and reports the hit index, and this says which observable
+ * that index came from. Reads 2 and 3 share `sessions.list`, so they must share
+ * one subscription — subscribing twice to the same source would be a leak the
+ * caller cannot see.
+ * -------------------------------------------------------------------------- */
+
+describe('session current: which source to follow', () => {
+  it('follows the observable the winning read answered from', () => {
+    const adapter = viewOf('session-1')
+    const alias = viewOf('session-1')
+    const sessions = sessionsOf({ 'session-1': retained('one') }, 'session-1')
+
+    assert.equal(
+      currentSessionObservable({ uiSession: { adapter: { current: adapter } }, sessions }, 0),
+      adapter,
+    )
+    assert.equal(currentSessionObservable({ uiSession: { current: alias } }, 1), alias)
+    // Reads 2 and 3 answer from one source, so they name one observable.
+    assert.equal(currentSessionObservable({ sessions }, 2), sessions.list)
+    assert.equal(currentSessionObservable({ sessions }, 3), sessions.list)
+  })
+
+  it('has nothing to follow when no read answered', () => {
+    assert.equal(
+      currentSessionObservable({ uiSession: {}, sessions: sessionsOf({}) }, -1),
+      null,
+    )
+  })
+
+  it('has nothing to follow when the source is missing or unreadable', () => {
+    const sessions = sessionsOf({ 'session-1': retained('one') }, 'session-1')
+    // A service that exists but is not an observable.
+    assert.equal(currentSessionObservable({ uiSession: { adapter: { current: {} } } }, 0), null)
+    assert.equal(currentSessionObservable({}, 1), null)
+    assert.equal(currentSessionObservable({}, 2), null)
+    // A read that blows up while being reached costs the subscription, not the
+    // page: the caller keeps working through the generation check.
+    const exploding = {
+      get adapter(): never { throw new Error('service is not ready') },
+    }
+    assert.equal(currentSessionObservable({ uiSession: exploding }, 0), null)
+    // ...and the source the other reads use is unaffected.
+    assert.equal(currentSessionObservable({ uiSession: exploding, sessions }, 2), sessions.list)
   })
 })

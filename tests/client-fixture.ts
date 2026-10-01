@@ -213,3 +213,56 @@ export async function waitFor(
   }
   throw new Error(`timed out waiting for ${label}`)
 }
+
+/**
+ * A `HostObservable` double whose value the test can move.
+ *
+ * The three ways the host changes a value are kept separate on purpose:
+ * `set()` moves it silently, `notify()` announces a change nobody made, and
+ * `emit()` does both. Separating them is what lets a test pin the client's
+ * reaction to "the source emitted" apart from "the session actually moved" —
+ * the two are not the same event, and the client must not treat them as one.
+ *
+ * @typeParam T - the snapshot type.
+ */
+export class FakeObservable<T> {
+  private value: T
+  private readonly listeners = new Set<() => void>()
+  /** How many times the client subscribed. */
+  subscribeCount = 0
+  /** How many times the client's unsubscribe was called. */
+  unsubscribeCount = 0
+
+  constructor(value: T) {
+    this.value = value
+  }
+
+  getSnapshot(): T {
+    return this.value
+  }
+
+  subscribe(listener: () => void): () => void {
+    this.subscribeCount += 1
+    this.listeners.add(listener)
+    return () => {
+      this.unsubscribeCount += 1
+      this.listeners.delete(listener)
+    }
+  }
+
+  /** Replace the value without notifying anyone. */
+  set(next: T): void {
+    this.value = next
+  }
+
+  /** Notify the listeners without changing the value. */
+  notify(): void {
+    for (const listener of [...this.listeners]) listener()
+  }
+
+  /** Replace the value and notify, as the host does on a real change. */
+  emit(next: T): void {
+    this.set(next)
+    this.notify()
+  }
+}

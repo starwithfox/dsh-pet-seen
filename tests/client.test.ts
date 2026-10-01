@@ -16,6 +16,7 @@ import { after, afterEach, describe, it } from 'node:test'
 import type { ClientContext } from '../src/client/index.js'
 import { SEEN_RETRY_COOLDOWN_MS, apply } from '../src/client/index.js'
 import {
+  FakeObservable,
   FixtureDocument,
   item,
   notice,
@@ -28,14 +29,32 @@ interface FakeCall {
   readonly body: Record<string, unknown>
 }
 
+/** The `uiSession` face a test can install, when it wants read 0. */
+interface FakeUiSession {
+  adapter: { current: FakeObservable<{ key?: string }> }
+}
+
+/** A session binding; `key` is absent when there is no current session. */
+function bindingOf(key: string | null): { key?: string } {
+  return key === null ? {} : { key }
+}
+
 /** What the stubbed page reports about itself. */
 interface FakePage {
   document: FixtureDocument
   calls: FakeCall[]
+  /** The session each `/notices` GET asked about, in order. */
+  noticesRequests: string[]
   /** Every visibility report the page sent, in order. */
   visibilityReports: number
   /** Answer one POST; return null to simulate a transport failure. */
   respond: (path: string, body: Record<string, unknown>, index: number) => Record<string, unknown> | null
+  /** The `uiSession` service, when the test asked for one. */
+  uiSession: FakeUiSession | null
+  /** Move the session without announcing it, as a source-less switch does. */
+  setSession: (sessionId: string | null) => void
+  /** Fire a window event the client registered for. */
+  fire: (event: string) => void
   dispose: () => void
 }
 
@@ -52,24 +71,48 @@ const installed: Array<() => void> = []
  */
 const realFetch = globalThis.fetch
 
-/** Put the fake page in place and start the client. */
+/**
+ * Put the fake page in place and start the client.
+ *
+ * The session is a movable value rather than a captured constant, and a
+ * `/notices` answer can be held open (`hold`) while the test moves that value.
+ * That pair is what makes the in-flight cases testable at all: without a way to
+ * release an answer for session A *after* the page has moved to B, the
+ * out-of-order behaviour cannot be observed.
+ */
 function startClient(options: {
-  notices: () => unknown[]
+  notices: (sessionId: string) => unknown[]
   dwellMs?: number
   respond?: FakePage['respond']
   sessionId?: string | null
+  /** Give the page a subscribable `uiSession` service, i.e. read 0. */
+  uiSession?: boolean
+  /** Hold a `/notices` answer until the returned promise settles. */
+  hold?: (sessionId: string, index: number) => Promise<void> | null
+  /** Hold a `/visibility` POST (1-based) until the returned promise settles. */
+  holdVisibility?: (index: number) => Promise<void> | null
   cooldownMs?: number
 }): FakePage {
   const document = new FixtureDocument()
   const calls: FakeCall[] = []
+  let sessionId = options.sessionId === undefined ? 'session-1' : options.sessionId
+  const uiSession: FakeUiSession | null = options.uiSession === true
+    ? { adapter: { current: new FakeObservable<{ key?: string }>(bindingOf(sessionId)) } }
+    : null
   const page: FakePage = {
     document,
     calls,
+    noticesRequests: [],
     visibilityReports: 0,
     respond: options.respond ?? (() => ({ v: 1, ok: true })),
+    uiSession,
+    setSession: (next) => {
+      sessionId = next
+      uiSession?.adapter.current.set(bindingOf(next))
+    },
+    fire: () => {},
     dispose: () => {},
   }
-  const sessionId = options.sessionId === undefined ? 'session-1' : options.sessionId
 
   const storage = new Map<string, string>()
   const restore: Array<() => void> = []
@@ -82,11 +125,21 @@ function startClient(options: {
     })
   }
 
+  /** Window listeners, so a test can drive focus/visibility by hand. */
+  const windowListeners = new Map<string, EventListener[]>()
   const fakeWindow = {
     innerHeight: document.viewportHeight,
     scrollY: 0,
-    addEventListener: () => {},
-    removeEventListener: () => {},
+    addEventListener: (event: string, listener: EventListener) => {
+      const bucket = windowListeners.get(event) ?? []
+      bucket.push(listener)
+      windowListeners.set(event, bucket)
+    },
+    removeEventListener: (event: string, listener: EventListener) => {
+      const bucket = windowListeners.get(event) ?? []
+      const at = bucket.indexOf(listener)
+      if (at >= 0) bucket.splice(at, 1)
+    },
   }
   const fakeSessionStorage = {
     getItem: (key: string) => storage.get(key) ?? null,
@@ -99,20 +152,29 @@ function startClient(options: {
   setGlobal('fetch', async (path: string, init: { method?: string, body?: string }) => {
     const method = init?.method ?? 'GET'
     if (method === 'GET') {
+      const asked = new URL(path, 'http://page.test').searchParams.get('sessionId') ?? ''
+      page.noticesRequests.push(asked)
+      const held = options.hold?.(asked, page.noticesRequests.length)
+      if (held !== undefined && held !== null) await held
       return {
         ok: true,
         json: async () => ({
           v: 1,
           revision: 1,
           sessionId,
-          notices: options.notices(),
+          notices: options.notices(asked),
           seenDwellMs: options.dwellMs ?? 60,
         }),
       }
     }
     const body = JSON.parse(init.body ?? '{}') as Record<string, unknown>
     calls.push({ path, body })
-    if (path.endsWith('/visibility')) page.visibilityReports += 1
+    let held: Promise<void> | null = null
+    if (path.endsWith('/visibility')) {
+      page.visibilityReports += 1
+      held = options.holdVisibility?.(page.visibilityReports) ?? null
+    }
+    if (held !== null) await held
     const answer = page.respond(path, body, calls.length)
     if (answer === null) throw new Error('simulated transport failure')
     return { ok: true, json: async () => answer }
@@ -129,6 +191,7 @@ function startClient(options: {
   let disposer: (() => void | Promise<void>) | void
   const context: ClientContext = {
     sessions: session,
+    get: (name: string) => (name === 'uiSession' ? uiSession ?? undefined : undefined),
     effect: (callback) => { disposer = callback() },
     logger: { info: () => {}, warn: () => {} },
   }
@@ -141,6 +204,9 @@ function startClient(options: {
 
   page.dispose = () => {
     void disposer?.()
+  }
+  page.fire = (event) => {
+    for (const listener of [...(windowListeners.get(event) ?? [])]) listener({} as Event)
   }
   return page
 }
@@ -259,5 +325,210 @@ describe('client wiring: recovering from a refusal', () => {
     page.document.setItems([item(3, 'assistant-step', { top: 200, bottom: 4_000 })])
     await sleep(400)
     assert.deepEqual(posted(page).filter(path => path.endsWith('/seen')), [])
+  })
+})
+
+/**
+ * The invariant of `FIX-DESIGN` §5.1.4 — a switch invalidates everything that
+ * was observed for the session the user left — plus the subscription that only
+ * narrows the window in which a switch is *noticed*.
+ *
+ * The first four cases run on the plain `sessions.list` face, which offers no
+ * `subscribe` at all: the generation check has to hold on its own, and a test
+ * that let the subscription cover for it would prove nothing about the
+ * invariant. The last two install a subscribable `uiSession` (read 0) and pin
+ * what an emission may and may not do.
+ */
+describe('client wiring: leaving a session mid-flight', () => {
+  /** The body of every `/seen` report, in order. */
+  const seenReports = (page: FakePage): Array<Record<string, unknown>> =>
+    page.calls.filter(call => call.path.endsWith('/seen')).map(call => call.body)
+
+  it('drops a notices response that lands after the session switched', async () => {
+    let release: () => void = () => {}
+    const held = new Promise<void>(resolve => { release = resolve })
+    const page = startClient({
+      sessionId: 'session-a',
+      notices: asked => (asked === 'session-a' ? [notice('nA', 3)] : [notice('nB', 3)]),
+      hold: asked => (asked === 'session-a' ? held : null),
+    })
+    page.document.setItems([item(3, 'assistant-step', { top: 200, bottom: 4_000 })])
+
+    await waitFor(() => page.noticesRequests.length >= 1, 'the first notices request')
+    // Quiet page from here on: the poll is gated by visibility, nothing is
+    // subscribed on this face, and no event is fired. A request for B can
+    // therefore only come from the *dropped* response — which is what adopting
+    // the session it just refused to describe looks like. Nothing else in the
+    // client can notice the switch while the page is hidden.
+    page.document.visibleState = 'hidden'
+    page.setSession('session-b')
+    const before = page.noticesRequests.length
+    release()
+
+    await waitFor(
+      () => page.noticesRequests.slice(before).includes('session-b'),
+      'the dropped response to adopt the new session',
+      900,
+    )
+    // ...and it must not have armed a watch target for the session left behind.
+    page.document.visibleState = 'visible'
+    page.fire('focus')
+    await waitFor(() => seenReports(page).length >= 1, 'an observation')
+    const reports = seenReports(page)
+    assert.deepEqual(
+      reports.map(report => report.sessionId),
+      ['session-b'],
+      'the stale A body must not become the watch target',
+    )
+    assert.equal(reports[0]?.noticeId, 'nB')
+  })
+
+  it('lets the newer session win when two responses arrive out of order', async () => {
+    let releaseA: () => void = () => {}
+    let releaseB: () => void = () => {}
+    const heldA = new Promise<void>(resolve => { releaseA = resolve })
+    const heldB = new Promise<void>(resolve => { releaseB = resolve })
+    // Later polls are held forever on purpose: this case is about which answer
+    // wins, and a fresh answer landing mid-assertion would rewrite the state
+    // whichever way the client behaved.
+    const heldForever = new Promise<void>(() => {})
+    const page = startClient({
+      sessionId: 'session-a',
+      notices: asked => (asked === 'session-a' ? [notice('nA', 3)] : [notice('nB', 3)]),
+      hold: (asked, index) => {
+        if (asked === 'session-a') return heldA
+        return index === 2 ? heldB : heldForever
+      },
+    })
+    page.document.setItems([item(3, 'assistant-step', { top: 200, bottom: 4_000 })])
+
+    await waitFor(() => page.noticesRequests.length >= 1, "A's request")
+    page.setSession('session-b')
+    // Nothing is subscribed on this face, so the poll is what notices the
+    // switch — and B answers first.
+    await waitFor(() => page.noticesRequests.length >= 2, "B's request")
+    assert.equal(page.noticesRequests[1], 'session-b')
+    releaseB()
+    await waitFor(() => seenReports(page).length >= 1, 'B to be settled')
+    // A's older answer arrives last and must change nothing. Wait long enough
+    // for a wrong answer to have produced a report: the earliest a retargeted
+    // notice can fire is the next dwell tick plus the dwell it restarts.
+    releaseA()
+    await sleep(900)
+
+    assert.deepEqual(
+      seenReports(page).map(report => report.sessionId),
+      ['session-b'],
+      'a response from the older generation must not overwrite the newer one',
+    )
+  })
+
+  it('does not report to a session the user left while the lease refresh was in flight', async () => {
+    let releaseVisibility: () => void = () => {}
+    const heldVisibility = new Promise<void>(resolve => { releaseVisibility = resolve })
+    const page = startClient({
+      sessionId: 'session-a',
+      notices: asked => [notice(asked === 'session-a' ? 'nA' : 'nB', 3)],
+      // Report #1 is the startup one; report #2 is the lease refresh inside
+      // `reportSeen()`, and holding it puts the switch inside that await.
+      holdVisibility: index => (index === 2 ? heldVisibility : null),
+    })
+    page.document.setItems([item(3, 'assistant-step', { top: 200, bottom: 4_000 })])
+
+    await waitFor(() => page.visibilityReports >= 2, 'the lease refresh before an observation')
+    page.setSession('session-b')
+    page.fire('focus')
+    releaseVisibility()
+
+    await waitFor(() => page.noticesRequests.includes('session-b'), 'a request for B')
+    await sleep(400)
+    assert.deepEqual(
+      seenReports(page).filter(report => report.sessionId === 'session-a'),
+      [],
+      'an abandoned observation must not be sent to the session the user left',
+    )
+    // The page is still alive after dropping it: B's own notice is settled.
+    await waitFor(
+      () => seenReports(page).some(report => report.sessionId === 'session-b'),
+      "B's observation",
+    )
+  })
+
+  it('does not adopt a response that arrives after the session went away', async () => {
+    let release: () => void = () => {}
+    const held = new Promise<void>(resolve => { release = resolve })
+    const page = startClient({
+      sessionId: 'session-a',
+      notices: () => [notice('nA', 3)],
+      hold: () => held,
+    })
+    page.document.setItems([item(3, 'assistant-step', { top: 200, bottom: 4_000 })])
+
+    await waitFor(() => page.noticesRequests.length >= 1, "A's request")
+    page.setSession(null)
+    page.fire('focus')
+    release()
+    // Long enough for a wrongly adopted notice to have reached a dwell tick.
+    await sleep(900)
+
+    assert.deepEqual(seenReports(page), [], 'a notice for a session that is gone must not be reported')
+    assert.equal(
+      page.noticesRequests.includes(''),
+      false,
+      'the early exit must not turn a missing session into a query',
+    )
+  })
+
+  it('follows the read that answered, without waiting for the poll', async () => {
+    const page = startClient({
+      sessionId: 'session-a',
+      uiSession: true,
+      notices: asked => (asked === 'session-a' ? [notice('nA', 3)] : [notice('nB', 3)]),
+    })
+    await waitFor(() => page.noticesRequests.includes('session-a'), "A's first request")
+    assert.equal(
+      page.uiSession?.adapter.current.subscribeCount,
+      1,
+      'the read that answered is the one that must be followed',
+    )
+
+    // Hiding the page silences the poll, so a request for B can only come from
+    // the subscription callback.
+    page.document.visibleState = 'hidden'
+    const before = page.noticesRequests.length
+    page.setSession('session-b')
+    page.uiSession?.adapter.current.notify()
+
+    await waitFor(
+      () => page.noticesRequests.slice(before).includes('session-b'),
+      'a request for the new session',
+      700,
+    )
+  })
+
+  it('does not treat an emission without a session change as a switch', async () => {
+    let seenAttempts = 0
+    const page = startClient({
+      sessionId: 'session-a',
+      uiSession: true,
+      // The host keeps listing the notice; the page's own refusal is what stops
+      // it, so clearing that bookkeeping would make the notice reportable again.
+      notices: () => [notice('n1', 3)],
+      respond: (path) => {
+        if (!path.endsWith('/seen')) return { v: 1, ok: true }
+        seenAttempts += 1
+        return { v: 1, accepted: false, reason: 'already-dismissed' }
+      },
+    })
+    page.document.setItems([item(3, 'assistant-step', { top: 200, bottom: 4_000 })])
+
+    await waitFor(() => seenAttempts >= 1, 'the terminal refusal')
+    page.uiSession?.adapter.current.notify()
+    await sleep(900)
+    assert.equal(
+      seenAttempts,
+      1,
+      'an emission that did not move the session must not re-open a refused notice',
+    )
   })
 })
