@@ -14,6 +14,11 @@
  * A case that is about a switch this page has *not* noticed yet must move the
  * session and fire nothing — see the mid-flight suite below before adding a
  * `page.fire(...)` to one of them.
+ *
+ * `page` itself never fires anything (`fire` is a no-op stub): every case that
+ * needs an event must call `page.fire(...)` explicitly, so "did this case
+ * announce the switch?" is visible at the call site rather than hidden in the
+ * harness.
  */
 import assert from 'node:assert/strict'
 import { after, afterEach, describe, it } from 'node:test'

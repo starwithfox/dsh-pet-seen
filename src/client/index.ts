@@ -473,9 +473,10 @@ export function apply(ctx: ClientContext): void {
     // every interleaving that was probed for it (a switch, a removal, both while
     // the POST is open) is already caught by the cached values, because anything
     // that syncs the new session also bumps the generation — and the re-read adds
-    // the same answer for a switch that somehow arrived without one. Kept for
-    // symmetry with the first check, and on record as not being pinned by a
-    // failing case; see `IMPL-LOG` §3b.
+    // the same answer for a switch that somehow arrived without one. Kept on
+    // record as not being pinned by a failing case, and kept anyway: the measured
+    // cost is one snapshot read per settled notice, far below the POST it follows.
+    // See the "性能实测" section of `working-docs/IMPL-LOG-SESSION-CURRENT-2026-10-01.md`.
     if (disposed || gen !== generation || currentSessionId !== sessionId) return
     const afterPost = snapshot()
     if (disposed || afterPost.sessionId !== sessionId) {
