@@ -300,8 +300,9 @@ v1 **只发**：事件名、`sessionId`、会话标题（可关、截断 160）�
 npm run typecheck       # 对着本机运行中的 DSH 类型检查（见下）
 npm test                # 编译测试 + 跑全部单测/集成测试（末行打印实测条数）
 npm run build           # 两个 bundle（lib/index.js、client/client.js）
-npm run smoke:bundle    # 加载真实产物，校验 bundle 纯净性与 manifest
+npm run smoke:bundle    # 加载真实产物，校验 bundle 纯净性、manifest 与产物卫生（探针残留 / 本机路径）
 npm run check:artifacts # 判定「HEAD 里的产物 = 源码产物」（在 build 之后跑）
+npm run probe:http      # 探针：web 资产 + 控制面；陈旧客户端半边与漂移都判 FAIL（可加 --state-json 夹具）
 npm run roundtrip       # 离线跑通全链路（不碰运行中的 DSH）
 npm run mock-pet        # 假桌宠：收事件 + 交互 ack（seen/dismiss/state/quit）
 npm run check           # 以上全部（含产物一致性闸门）
@@ -320,6 +321,18 @@ npm run check           # 以上全部（含产物一致性闸门）
 - 改了 `src/` 的提交**必须**带重建后的产物；`prepack` 保证 `npm pack` / `npm publish` 前先重建。
 - `lib/types/*.d.ts` **已删除**：本包**不发布类型**（`tsconfig.types.json` 明文 `noEmit`、`exports` 里
   也没有 `types` 条件），那 6 个文件是 2026-09-24 旧构建的残留，却会被 `files: ["lib"]` 整目录打进包里。
+
+### 产物卫生（第 5.1 步新增）
+
+`smoke:bundle` 现在还断言两个产物里**没有探针残留**（denylist：`tamper-probe` / `probe-residue`）
+与**没有本机绝对路径**（`C:\Users` / `C:/Users` / `star_fox` / 仓库名 / `file:///`）。
+
+**约定**：往内置产物追加一行来做伪造探针时，**那一行必须含 `tamper-probe`**，否则闸门认不出来。
+来由是一次真实事故：4.3 的 P1 探针往 `client/client.js` 追加了一行，而 `file:` 安装与工作树**同 inode
+（硬链接）**，那一行便**穿透**进了 `node_modules`，探针还原时又断开了链接——装出去的那份就冻在
+"第 4.2 步产物 + 探针残留"上一整天，而所有闸门都是绿的（`working-docs/IMPL-LOG-SESSION-CURRENT.md` 第 5.1 步）。
+
+⇒ **装/发之前**跑齐三条：`npm run build` → `npm run check:artifacts` → `npm run smoke:bundle`（都要绿）。
 
 ### 类型检查对着**活的** DSH
 
