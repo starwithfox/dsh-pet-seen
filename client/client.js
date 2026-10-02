@@ -6,6 +6,18 @@ window.__ModuleLoader__.load({
 		Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });
 		//#region src/protocol.ts
 		/**
+		* Identity of the build these bytes came from.
+		*
+		* Derived from the package version and the contents of every file under `src/`,
+		* so two halves that were not built together cannot share it. The host publishes
+		* its own copy in `GET /state`, each page reports its own on
+		* `POST /pet-bridge/visibility`, and `tools/probe-http.mjs` fails when either is
+		* missing or when the two disagree — which is how a half-refreshed install
+		* ("host new, page old", or the reverse) stops being silent. See
+		* `HANDOVER-STEP5.1` §6 and `IMPL-LOG` step 6.1.
+		*/
+		const BUILD_ID = "557e5b64dbdc3f00";
+		/**
 		* Browser-facing route paths. Each is registered as its own `exact` route so a
 		* method mismatch is answered per path instead of falling through to a shared
 		* dispatcher.
@@ -814,6 +826,10 @@ window.__ModuleLoader__.load({
 		*    including the `-1` reading where none did. That is the drift self-check of
 		*    `FIX-DESIGN` §5.5: the same condition that silently broke notice retraction
 		*    on 0.2.0-rc.2 now leaves a trace in `GET /state` within seconds.
+		* 5. Reports its **own build identity** on the same reports (step 6.1), so the
+		*    host can publish "what I am" next to "what the page says it is" and a
+		*    half-refreshed install — a new host with an old page, or the reverse — is
+		*    visible instead of silent. See `HANDOVER-STEP5.1` §6.
 		*
 		* Every decision it makes is in `decide.ts`; this file is only the wiring.
 		*
@@ -1098,7 +1114,8 @@ window.__ModuleLoader__.load({
 					visible: document.visibilityState === "visible",
 					focused: document.hasFocus(),
 					title: resolved.title,
-					...readDiagnostics(resolved)
+					...readDiagnostics(resolved),
+					buildId: BUILD_ID
 				});
 			};
 			/** Point the tracker at whichever unconfirmed notice is worth watching. */
@@ -1208,7 +1225,8 @@ window.__ModuleLoader__.load({
 					visible: false,
 					focused: false,
 					title: current.title,
-					...readDiagnostics(current)
+					...readDiagnostics(current),
+					buildId: BUILD_ID
 				});
 				try {
 					if (typeof navigator.sendBeacon === "function") {

@@ -24,8 +24,10 @@ import { randomUUID } from 'node:crypto'
 import Schema from '@deepseek-ai/schemastery'
 import type { Context } from '@deepseek-ai/cordis'
 import {
+  BUILD_ID,
   DEFAULT_CONTROL_PORT,
   DEFAULT_PET_PORT,
+  PLUGIN_VERSION,
   PROTOCOL_VERSION,
   clampTitle,
 } from './protocol.js'
@@ -303,6 +305,13 @@ export function apply(
     // it is rewritten on every lease refresh, so counting it as a snapshot
     // change would make `revision` churn while nothing real had moved.
     browserTabs: browserRoutes?.diagnostics() ?? [],
+    // The build-identity handshake (step 6.1): what *this* host half was
+    // compiled from, published next to each tab's report of the same fact in
+    // `browserTabs`. Both are stated, neither is judged — a reader compares them
+    // (`tools/probe-http.mjs` fails on a mismatch), because "the page is stale"
+    // is a conclusion about two facts and this payload only carries one of them.
+    buildId: BUILD_ID,
+    pluginVersion: PLUGIN_VERSION,
   })
 
   /** Push a normalized event; suppressed until the pet has ever handshaken. */
@@ -700,6 +709,7 @@ export type {
 export type { RunCompletion, SessionFacts } from './state.js'
 export {
   BROWSER_ROUTES,
+  BUILD_ID,
   CONTROL_ROUTES,
   DEFAULT_CONTROL_PORT,
   DEFAULT_PET_PORT,
@@ -707,6 +717,7 @@ export {
   MAX_REQUEST_BODY_BYTES,
   MAX_TITLE_LENGTH,
   NOTICE_EVENT_NAMES,
+  PLUGIN_VERSION,
   PROTOCOL_VERSION,
   clampText,
   clampTitle,

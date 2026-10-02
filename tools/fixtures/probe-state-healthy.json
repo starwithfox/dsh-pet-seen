@@ -3,6 +3,8 @@
   "revision": 43,
   "petPort": 17322,
   "browserRoutes": true,
+  "buildId": "3f9c1a7d2e5b8046",
+  "pluginVersion": "0.1.0",
   "notices": [],
   "sessions": [
     {
@@ -19,6 +21,7 @@
       "reader": 0,
       "readerReason": "uiSession.adapter.current",
       "byIdCount": 169,
+      "buildId": "3f9c1a7d2e5b8046",
       "at": 1790908816747
     }
   ]

@@ -225,9 +225,20 @@ dsh plugin add --profile web file:<克隆目录>\dsh-plugin
 
 ```http
 POST /hello { "v": 1, "petVersion": "…", "port": 17322, "token": "…" }
-GET  /state?token=…            # { v, revision, sessions, notices, petPort, browserRoutes }
+GET  /state?token=…            # { v, revision, sessions, notices, petPort, browserRoutes, browserTabs, buildId, pluginVersion }
 POST /ack   { "v": 1, "noticeId": "…", "action": "shown" | "dismissed", "token": "…" }
 ```
+
+`/state` 的字段（桌宠只读 `sessions` 与 `revision`，其余键一律忽略 ⇒ 新增字段不必升协议版本）：
+
+| 字段 | 含义 |
+| --- | --- |
+| `v` | **协议**版本（`1`），不是插件版本 |
+| `revision` | 快照版本号，宿主进程内单调递增 |
+| `sessions` / `notices` / `petPort` / `browserRoutes` | 会话桶、通知、桌宠端口、浏览器路由是否挂载 |
+| `browserTabs` | 每个活页面最近一次上报的**会话读法诊断**与**构建标识**（15 s 租约，页面可见且聚焦才续租） |
+| `buildId` | **宿主半边**的构建标识（见 §5「构建标识握手」） |
+| `pluginVersion` | 该构建当时的 `package.json` `version`（人看的名字，与 `v` 无关） |
 
 握手文件写在 `~/.dsh/pet-bridge.json`（权限 0600）：
 
@@ -244,9 +255,13 @@ POST /ack   { "v": 1, "noticeId": "…", "action": "shown" | "dismissed", "token
 
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
-| `POST` | `/pet-bridge/visibility` | 上报 `tabId` / `sessionId` / `visible` / `focused`（+ title）；只用于焦点租约与诊断 |
+| `POST` | `/pet-bridge/visibility` | 上报 `tabId` / `sessionId` / `visible` / `focused`（+ title / 读法诊断 / `buildId`）；只用于焦点租约与诊断 |
 | `GET` | `/pet-bridge/notices?sessionId=…` | 只返回该会话**待确认**通知的 `noticeId`/`runId`/`targetTurnRef` |
 | `POST` | `/pet-bridge/seen` | `{ noticeId, runId, sessionId, tabId, observed: true }` |
+
+`/visibility` 是**遥测**，不是同意：它标记不了任何通知已读，只有页面上的 L3 观察经
+`/seen` 才能。它同时携带两类诊断——**会话读法自检**（`reader` / `readerReason` / `byIdCount`）与
+**构建标识**（`buildId`，见 §5「构建标识握手」）——两者都只被宿主记录，桌宠永不读这条路由。
 
 `/seen` 的准入条件（缺一不可，宿主持有最终裁决）：
 
@@ -300,9 +315,9 @@ v1 **只发**：事件名、`sessionId`、会话标题（可关、截断 160）�
 npm run typecheck       # 对着本机运行中的 DSH 类型检查（见下）
 npm test                # 编译测试 + 跑全部单测/集成测试（末行打印实测条数）
 npm run build           # 两个 bundle（lib/index.js、client/client.js）
-npm run smoke:bundle    # 加载真实产物，校验 bundle 纯净性、manifest 与产物卫生（探针残留 / 本机路径）
+npm run smoke:bundle    # 加载真实产物，校验 bundle 纯净性、manifest、产物卫生与构建标识
 npm run check:artifacts # 判定「HEAD 里的产物 = 源码产物」（在 build 之后跑）
-npm run probe:http      # 探针：web 资产 + 控制面；陈旧客户端半边与漂移都判 FAIL（可加 --state-json 夹具）
+npm run probe:http      # 探针：web 资产 + 控制面；陈旧半边、两半不同构建与漂移都判 FAIL（可加 --state-json 夹具）
 npm run roundtrip       # 离线跑通全链路（不碰运行中的 DSH）
 npm run mock-pet        # 假桌宠：收事件 + 交互 ack（seen/dismiss/state/quit）
 npm run check           # 以上全部（含产物一致性闸门）
@@ -333,6 +348,36 @@ npm run check           # 以上全部（含产物一致性闸门）
 "第 4.2 步产物 + 探针残留"上一整天，而所有闸门都是绿的（`working-docs/IMPL-LOG-SESSION-CURRENT.md` 第 5.1 步）。
 
 ⇒ **装/发之前**跑齐三条：`npm run build` → `npm run check:artifacts` → `npm run smoke:bundle`（都要绿）。
+
+### 构建标识握手（第 6.1 步新增）
+
+本插件是**两个各自独立加载的产物**：`lib/index.js`（宿主半边，**只有重启宿主才会换**）与
+`client/client.js`（页面半边，随页面加载）。两者之间原本**没有任何版本握手** ⇒ 任何"半刷新"都会产生
+**看不出来的混合态**：宿主新 / 页面旧，或反过来。最坏的一种就是"页面旧到不再取件"，表现成
+**弹窗不消失，而宿主状态、退出码、日志全都正常**（`working-docs/IMPL-LOG-SESSION-CURRENT.md` 第 5.1 步
+记了 2026-10-02 实测到的那一次）。
+
+现在两半都会声明自己是哪一次构建：
+
+- **标识是什么**：`tools/build-id.mjs` 里 `sha256(package.json 的 version + src/** 每个文件)` 的**前 16 位**，
+  由 `tsdown.config.ts` 用 `define` **同时**烘焙进两半 ⇒ 同一次构建的两半必然相同，不同的构建必然不同。
+  它是**内容派生**的：改了 `src/`（哪怕只改注释）或改了 `version`，id 就会变。
+- **谁报给谁**：页面在每次 `POST /pet-bridge/visibility`（含 `pagehide` 那次）里带上自己的 `buildId`；
+  宿主把自己的 `buildId` 与每个 tab 报来的 `buildId` **并列**放进 `/state`（外加人看的 `pluginVersion`）。
+  **宿主不给判决**——它只陈述两个事实，"哪一半落后"留给读者，免得把这个信息压成一个布尔。
+- **谁判红**：`npm run probe:http`。三条新判据排在读法判据之前（两半不同构建时，读法异常只是**症状**）：
+  宿主没有 `buildId` ⇒ **FAIL**（宿主半边早于本步）；某个活 tab 没有 `buildId` ⇒ **FAIL**（该页面半边早于本步）；
+  两者不一致 ⇒ **FAIL**（`MIXED`）。`bridge-state.mjs` 只打印 `OLD` / `MIXED` 标记，不判。
+- **闸门**：`smoke:bundle` 第 8 条要求**两半产物都携带当前源码的 id**。它补的是一个实测过的假阴性——
+  **改了 `src/` 却不 `build` 时，`check:artifacts` 是绿的**（两个闸门咬的不是同一件事：前者管"产物进没进
+  HEAD"，这条管"产物是不是当前源码的"）。
+
+**排障口径**（细节见 `working-docs/STATUS.md` §4 第 27 条与 §12 ⑩）：
+
+- `link:` 安装**只保证运行期读工作树，不保证宿主半边热重载** ⇒ 改过 `lib/` 后**必须重启宿主**，
+  页面半边则会自己重建。重启前 `probe:http` 报 `this host half predates the build handshake` **是预期**。
+- `file:` 安装是**硬链接镜像**：就地改写会穿透，改名/重建会断链并**冻住该文件** ⇒ `git pull` 之后
+  **必须重装**，只跑 `build` 修不好已断链的那一半。混装的两半会被上面那条判据直接抓出来。
 
 ### 类型检查对着**活的** DSH
 
@@ -413,7 +458,7 @@ dsh-plugin/
 ├── src/
 │   ├── index.ts          # apply(ctx, config)：订阅、控制服务、推送、可选浏览器路由
 │   ├── pins.ts           # 唯一引用 DSH 内部类型的模块：faces + 编译期锚点 + 其机制
-│   ├── protocol.ts       # 三方共享的协议事实源（无 node: 依赖，浏览器侧也 import）
+│   ├── protocol.ts       # 三方共享的协议事实源（无 node: 依赖，浏览器侧也 import）+ 构建标识
 │   ├── state.ts          # SessionProgress / Notice 表 + 运行结束聚合（纯函数）
 │   ├── pet-client.ts     # 向桌宠 POST（超时/串行队列/abort）
 │   ├── control-server.ts # /hello /state /ack
@@ -434,6 +479,7 @@ dsh-plugin/
 │   ├── session-picker.test.ts
 │   └── gate-c-judge.test.ts
 └── tools/
+    ├── build-id.mjs      # 构建标识的唯一定义（version + src/** 的哈希），构建与门禁共用
     ├── mock-pet.mjs      # 假桌宠（`--ack-shown` 用来停在 shown 态）
     ├── roundtrip.mjs     # 离线全链路（凭据写私有临时路径，不碰活桥接）
     ├── cdp-acceptance.mjs / gate-c-*.js / *-page.js / browser-auth.mjs

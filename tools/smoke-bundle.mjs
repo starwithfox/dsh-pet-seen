@@ -18,6 +18,20 @@
  * 5. `package.json` wires the bundle, client and patch entries.
  * 6. Neither built artifact carries **probe residue** or a **local absolute
  *    path** (added 2026-10-02, step 5.1).
+ * 7. Both artifacts carry the **build identity of the current sources**
+ *    (added 2026-10-02, step 6.1).
+ *
+ * Check 7 exists because nothing else could answer "is this artifact current?".
+ * `check:artifacts` compares the worktree artifacts with `HEAD`, so editing
+ * `src/` and never running `build` left it green — a false negative its own
+ * P2 probe demonstrated in step 4.3 — and the same question about an *installed*
+ * copy has no repository-side answer at all. Recomputing the identity from
+ * `src/` and demanding it in both bundles closes the first half here and makes
+ * the second half detectable in the field: the two halves state which build they
+ * are, and `probe-http.mjs` fails when they disagree.
+ *
+ * Consequence, by design rather than by fault: after editing `src/` this check
+ * fails until `npm run build` runs, exactly as `check:artifacts` does.
  *
  * Check 6 exists because a fake probe reached an installed copy once: during
  * step 4.3 a tamper probe appended `// tamper-probe` to the worktree
@@ -39,6 +53,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { computeBuildId, readPluginVersion } from './build-id.mjs'
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)))
 const read = (relative) => readFileSync(join(root, relative), 'utf8')
@@ -156,6 +171,27 @@ check('built artifacts carry no local absolute paths', () => {
       )
     }
   }
+})
+
+/* 7. Build identity: the artifacts are this source tree's build. ---------- */
+const expectedBuildId = computeBuildId(root)
+const expectedVersion = readPluginVersion(root)
+check('built artifacts carry the build identity of the current sources', () => {
+  // The host bundle is loaded above, so it can be asked directly; the client
+  // bundle registers itself on a global the loader provides, so its identity is
+  // read from the bytes. Same value either way, and that is the claim.
+  assert.equal(host.BUILD_ID, expectedBuildId, 'lib/index.js was not built from this src/ + version')
+  assert.equal(host.PLUGIN_VERSION, expectedVersion)
+  assert.equal(
+    clientSource.includes(expectedBuildId),
+    true,
+    'client/client.js was not built from this src/ + version',
+  )
+  assert.equal(
+    expectedBuildId.length,
+    16,
+    'the identity is a bounded diagnostic value, not a digest dump',
+  )
 })
 
 if (failures.length > 0) {

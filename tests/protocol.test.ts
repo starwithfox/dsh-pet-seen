@@ -8,11 +8,13 @@ import { bridge } from './harness.js'
 
 const {
   BROWSER_ROUTES,
+  BUILD_ID,
   CONTROL_ROUTES,
   DEFAULT_CONTROL_PORT,
   DEFAULT_PET_PORT,
   MAX_TITLE_LENGTH,
   NOTICE_EVENT_NAMES,
+  PLUGIN_VERSION,
   PROTOCOL_VERSION,
   clampText,
   clampTitle,
@@ -45,6 +47,26 @@ describe('protocol constants', () => {
     for (const path of controlPaths) {
       assert.equal(browserPaths.includes(path), false, `${path} is claimed by both namespaces`)
     }
+  })
+})
+
+describe('build identity', () => {
+  it('falls back to an explicit value outside a bundle instead of throwing', () => {
+    /*
+     * The suite compiles `src/` with plain `tsc` and runs it from `test-dist/`,
+     * where no bundler ever substitutes the ambient constants — so this is the
+     * `typeof` branch, and it has to be a *value* rather than a crash: a client
+     * half that threw at import time would take the whole page's pet wiring with
+     * it. The bundled values are a different question, and `smoke:bundle` is the
+     * only place that can answer it (it recomputes the identity from the sources
+     * and refuses artifacts that do not carry it).
+     *
+     * If this case ever fails because the fallbacks changed, that is the point:
+     * both readers of the field treat a missing id and a wrong id as different
+     * findings.
+     */
+    assert.equal(BUILD_ID, 'unbundled')
+    assert.equal(PLUGIN_VERSION, '0.0.0-unbundled')
   })
 })
 

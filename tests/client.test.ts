@@ -22,6 +22,7 @@
  */
 import assert from 'node:assert/strict'
 import { after, afterEach, describe, it } from 'node:test'
+import { BUILD_ID } from '../src/protocol.js'
 import type { ClientContext } from '../src/client/index.js'
 import { NOTICES_POLL_MS, SEEN_RETRY_COOLDOWN_MS, apply } from '../src/client/index.js'
 import {
@@ -759,6 +760,12 @@ describe('client wiring: leaving a session mid-flight', () => {
  * by `byIdCount`: an empty app, or a page looking at sessions it cannot name.
  * The second one is the drift signal (`FIX-DESIGN` §5.5), and it used to leave
  * no trace anywhere.
+ *
+ * The build identity joined them in step 6.1 and is pinned here for the same
+ * reason: it is only worth anything if it actually leaves the page, and it has
+ * to leave on *both* body shapes — the polled report and the hand-written
+ * `pagehide` withdrawal — or the host reads the withdrawal as a client from
+ * before the handshake.
  * -------------------------------------------------------------------------- */
 describe('client wiring: reporting the session read', () => {
   /** The body of the first `/visibility` report the page sent. */
@@ -821,5 +828,24 @@ describe('client wiring: reporting the session read', () => {
     assert.equal(withdrawal.body.reader, 0)
     assert.equal(withdrawal.body.readerReason, 'uiSession.adapter.current')
     assert.equal(withdrawal.body.byIdCount, 1)
+  })
+
+  it('reports which build this client half is, on every body shape', async () => {
+    const page = startClient({ notices: () => [], uiSession: true, listCurrent: false })
+    await waitFor(() => page.visibilityReports >= 1, 'the startup report')
+
+    // The value itself is baked by the bundler; from `test-dist` (plain `tsc`,
+    // no bundler) it is the documented `unbundled` fallback, so what is asserted
+    // is that the page sends *whatever this build is* rather than a constant
+    // copied into the expectation.
+    assert.equal(typeof BUILD_ID, 'string')
+    assert.notEqual(BUILD_ID, '')
+    assert.equal(firstVisibility(page).buildId, BUILD_ID)
+
+    const before = page.calls.length
+    page.fire('pagehide')
+    const withdrawal = page.calls.slice(before).find(call => call.path.endsWith('/visibility'))
+    assert.ok(withdrawal !== undefined, 'the withdrawal reached the host')
+    assert.equal(withdrawal.body.buildId, BUILD_ID, 'a body without it reads as a pre-6.1 client')
   })
 })

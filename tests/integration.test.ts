@@ -22,7 +22,7 @@ import { bridge } from './harness.js'
 import { fakeWebServer } from './web-server-fixture.js'
 import type { FakeWebServer } from './web-server-fixture.js'
 
-const { BROWSER_ROUTES, PROTOCOL_VERSION, apply } = bridge
+const { BROWSER_ROUTES, BUILD_ID, PLUGIN_VERSION, PROTOCOL_VERSION, apply } = bridge
 
 /** A fake pet: a listener that records whatever the plugin pushes at it. */
 interface FakePet {
@@ -365,6 +365,12 @@ describe('loopback integration', () => {
    * Both carriers are exercised here, because they answer different questions:
    * a named session carries the read as a session fact, and a page that named
    * none — the drift case — can only appear in `browserTabs`.
+   *
+   * Since step 6.1 the same snapshot carries the build handshake, and this is
+   * where the *shape* of the host's answer is pinned: it states its own build
+   * and each tab's report of the same fact, and it renders no verdict about
+   * them. A host that compared the two and published "stale: true" would hide
+   * which half is behind, and would put the judgement in a second place.
    */
   it('publishes a page\'s session-read diagnostics in /state', async () => {
     const harness = await startPlugin(pet.port, { browserRoutes: true })
@@ -373,6 +379,10 @@ describe('loopback integration', () => {
       const empty = await controlGet(harness.controlPort, '/state', harness.token)
       assert.equal(empty.body?.browserRoutes, true)
       assert.deepEqual(empty.body?.browserTabs, [], 'no page has reported yet')
+      assert.equal(empty.body?.buildId, BUILD_ID, 'the host states its own build')
+      assert.equal(empty.body?.pluginVersion, PLUGIN_VERSION)
+      assert.equal(typeof empty.body?.buildId, 'string')
+      assert.notEqual(empty.body?.buildId, '')
 
       const blind = await harness.browser.call({
         method: 'POST',
@@ -386,6 +396,10 @@ describe('loopback integration', () => {
           reader: -1,
           readerReason: 'no-read-answered',
           byIdCount: 152,
+          // Deliberately *not* this host's build: a `file:` install that was
+          // never refreshed looks exactly like this, and the snapshot has to
+          // report it rather than reconcile it.
+          buildId: 'build-from-another-install',
         },
       })
       assert.equal(blind.status, 200)
@@ -398,6 +412,8 @@ describe('loopback integration', () => {
       assert.equal(tabs[0]?.reader, -1)
       assert.equal(tabs[0]?.readerReason, 'no-read-answered')
       assert.equal(tabs[0]?.byIdCount, 152)
+      assert.equal(tabs[0]?.buildId, 'build-from-another-install', 'the tab\'s claim, verbatim')
+      assert.notEqual(afterBlind.body?.buildId, tabs[0]?.buildId, 'a mixture is visible, not resolved')
       // Nothing to attach a session fact to, so nothing is invented.
       assert.deepEqual(afterBlind.body?.sessions, [])
 
@@ -414,6 +430,7 @@ describe('loopback integration', () => {
           reader: 0,
           readerReason: 'uiSession.adapter.current',
           byIdCount: 3,
+          buildId: BUILD_ID,
         },
       })
       assert.equal(named.status, 200)
@@ -425,6 +442,11 @@ describe('loopback integration', () => {
       assert.equal(sessions[0]?.reader, 0)
       const bothTabs = afterNamed.body?.browserTabs as Array<Record<string, unknown>>
       assert.deepEqual(bothTabs.map(tab => tab.tabId).sort(), ['tab-1', 'tab-2'])
+      assert.deepEqual(
+        bothTabs.map(tab => tab.buildId).sort(),
+        [BUILD_ID, 'build-from-another-install'].sort(),
+        'each tab is reported with the build it named',
+      )
     } finally {
       harness.dispose()
     }

@@ -22,13 +22,17 @@
  *    including the `-1` reading where none did. That is the drift self-check of
  *    `FIX-DESIGN` §5.5: the same condition that silently broke notice retraction
  *    on 0.2.0-rc.2 now leaves a trace in `GET /state` within seconds.
+ * 5. Reports its **own build identity** on the same reports (step 6.1), so the
+ *    host can publish "what I am" next to "what the page says it is" and a
+ *    half-refreshed install — a new host with an old page, or the reverse — is
+ *    visible instead of silent. See `HANDOVER-STEP5.1` §6.
  *
  * Every decision it makes is in `decide.ts`; this file is only the wiring.
  *
  * @module dsh-pet-bridge/client
  */
 
-import { BROWSER_ROUTES, PROTOCOL_VERSION } from '../protocol.js'
+import { BROWSER_ROUTES, BUILD_ID, PROTOCOL_VERSION } from '../protocol.js'
 import type { NoticesPayload, PendingNotice, SeenResponse } from '../protocol.js'
 import {
   byIdCount,
@@ -388,6 +392,11 @@ export function apply(ctx: ClientContext): void {
       focused: document.hasFocus(),
       title: resolved.title,
       ...readDiagnostics(resolved),
+      // The other end of the build handshake (step 6.1): the host holds its own
+      // identity next to this one, so "host new / page old" and its reverse stop
+      // being invisible. Deliberately outside `readDiagnostics()`, which is about
+      // the session-read chain; this is about which build is running at all.
+      buildId: BUILD_ID,
     })
   }
 
@@ -568,6 +577,10 @@ export function apply(ctx: ClientContext): void {
       // host keeps the last real answer either way, but a consistent body is
       // what makes "the tab reported no read" impossible to misread.
       ...readDiagnostics(current),
+      // Same reason as the read diagnostics: a body that omitted this would be
+      // indistinguishable from a pre-6.1 client's, and the host must not lose
+      // the tab's identity on its way out.
+      buildId: BUILD_ID,
     })
     try {
       if (typeof navigator.sendBeacon === 'function') {

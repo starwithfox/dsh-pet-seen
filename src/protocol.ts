@@ -17,7 +17,10 @@
  * in `pet.py`, so a change there has to bump {@link PROTOCOL_VERSION}. An
  * additive *optional* field on a browser-only route is not that: the pet never
  * reads `/pet-bridge/visibility`, and no participant can observe the addition
- * except the host. Those stay on v1 (see {@link VisibilityRequest.reader}).
+ * except the host. Those stay on v1 (see {@link VisibilityRequest.reader} and
+ * {@link VisibilityRequest.buildId}). The same holds for a **new** field on
+ * `/state`: `pet_bridge.snapshot_status()` reads `sessions` and `revision` and
+ * ignores every other key, so {@link StatePayload.buildId} is additive too.
  *
  * @module dsh-pet-bridge/protocol
  */
@@ -54,6 +57,59 @@ export const MAX_MESSAGE_LENGTH = 240
  * the page.
  */
 export const MAX_BY_ID_COUNT = 10_000
+
+/*
+ * Build identity, baked into **both** bundles by the bundler
+ * (`tsdown.config.ts` defines these two from `tools/build-id.mjs`). They are
+ * ambient here rather than imported because the value has to be a literal in the
+ * artifact: the whole point is that each half can state which build it came
+ * from without asking anyone.
+ *
+ * The `typeof` guards are what keeps the same source runnable outside a bundle.
+ * The test suite compiles `src/` with plain `tsc` (`test-dist/`), where no
+ * bundler ever substitutes these — `typeof` on an undeclared identifier is
+ * legal and yields `'undefined'`, so tests see the explicit fallbacks below
+ * instead of a `ReferenceError` at import time.
+ */
+declare const __PET_BUILD_ID__: string
+declare const __PET_PLUGIN_VERSION__: string
+
+/**
+ * Identity of the build these bytes came from.
+ *
+ * Derived from the package version and the contents of every file under `src/`,
+ * so two halves that were not built together cannot share it. The host publishes
+ * its own copy in `GET /state`, each page reports its own on
+ * `POST /pet-bridge/visibility`, and `tools/probe-http.mjs` fails when either is
+ * missing or when the two disagree — which is how a half-refreshed install
+ * ("host new, page old", or the reverse) stops being silent. See
+ * `HANDOVER-STEP5.1` §6 and `IMPL-LOG` step 6.1.
+ */
+export const BUILD_ID: string =
+  typeof __PET_BUILD_ID__ === 'string' && __PET_BUILD_ID__ !== '' ? __PET_BUILD_ID__ : 'unbundled'
+
+/**
+ * `package.json` `version` at the moment this build was made.
+ *
+ * The human-readable half of the same fact: {@link BUILD_ID} answers "same
+ * build or not", this answers "which release is it" without a hash lookup. It is
+ * the *plugin's* version — deliberately not the DSH version the peer range in
+ * `package.json` talks about, and not {@link PROTOCOL_VERSION}.
+ */
+export const PLUGIN_VERSION: string =
+  typeof __PET_PLUGIN_VERSION__ === 'string' && __PET_PLUGIN_VERSION__ !== ''
+    ? __PET_PLUGIN_VERSION__
+    : '0.0.0-unbundled'
+
+/**
+ * Cap on a build identity that arrives from a page.
+ *
+ * The client sends 16 hex characters or the `unbundled` fallback; the bound
+ * exists so a buggy or hostile page cannot write an unbounded string into the
+ * snapshot. Same rule as {@link MAX_BY_ID_COUNT}: a diagnostic value is bounded
+ * at the door rather than trusted.
+ */
+export const MAX_BUILD_ID_LENGTH = 64
 
 /**
  * Normalized event names. These are semantics, not raw harness event names:
@@ -197,6 +253,16 @@ export interface TabDiagnostic {
   readonly readerReason: string | null
   /** Last reported `byId` size, or null. */
   readonly byIdCount: number | null
+  /**
+   * Build identity that tab's client half reported, or null.
+   *
+   * Added in step 6.1. `null` means "this tab never reported one", which is what
+   * an older client half looks like — the same distinction
+   * {@link TabDiagnostic.reader} draws for the drift self-check, and the reason
+   * the two are separate concerns: a step-5 client reports a `reader` and no
+   * `buildId`, and one shipped before step 5 reports neither.
+   */
+  readonly buildId: string | null
   /** Epoch ms of that tab's last visibility report. */
   readonly at: number
 }
@@ -239,6 +305,24 @@ export interface StatePayload {
   readonly petPort: number | null
   /** Whether the browser route half is mounted (the DSH WebServer is present). */
   readonly browserRoutes: boolean
+  /**
+   * Identity of the build this host half was compiled from (step 6.1).
+   *
+   * The other end of the handshake: each page reports its own
+   * {@link TabDiagnostic.buildId} on every visibility report, and this is what
+   * the host itself claims to be. Equal values mean the two halves came from one
+   * build; a reader (`tools/probe-http.mjs`, `tools/bridge-state.mjs`) is what
+   * turns a difference into a report, because the host deliberately publishes
+   * the two facts rather than a verdict about them.
+   */
+  readonly buildId: string
+  /**
+   * `package.json` `version` this build was made from, for humans.
+   *
+   * Distinct from {@link StatePayload.v} (the protocol revision) and from the
+   * DSH version the peer range talks about; see {@link PLUGIN_VERSION}.
+   */
+  readonly pluginVersion: string
   /**
    * Per-tab session-read diagnostics, most recent report first.
    *
@@ -314,6 +398,15 @@ export interface VisibilityRequest {
   readonly readerReason?: string
   /** Size of `sessions.list.byId` when the report was made. */
   readonly byIdCount?: number
+  /**
+   * Identity of the build this page's client half came from (step 6.1).
+   *
+   * Sent on every report, including the `pagehide` withdrawal, so the host can
+   * hold it next to its own {@link BUILD_ID} and a half-refreshed install
+   * becomes visible in `GET /state` instead of staying silent. Additive on v1:
+   * this is a browser-only route the pet never reads.
+   */
+  readonly buildId?: string
 }
 
 /** One notice the browser is asked to watch for. */

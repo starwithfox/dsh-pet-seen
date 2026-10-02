@@ -8,6 +8,12 @@
  * *headless* shape, where `inject(['webServer'])` never resolves and the routes
  * are never mounted (see its "headless shape has no browser routes" case).
  *
+ * The endpoint carries two independent diagnostics and both are pinned here: the
+ * session-read self-check (`reader` and friends) and the **build identity** the
+ * page reports (step 6.1). They are read on separate rules on purpose — the read
+ * fields are taken as a unit keyed on the read index, the build identity stands
+ * alone — so a case that conflates them would hide the difference.
+ *
  * The WebServer is stubbed rather than bound to a real port. The handler is the
  * unit under test, and a socket would add flakiness without adding evidence.
  *
@@ -19,7 +25,13 @@
 import assert from 'node:assert/strict'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { describe, it } from 'node:test'
-import { BROWSER_ROUTES, MAX_BY_ID_COUNT, MAX_MESSAGE_LENGTH, PROTOCOL_VERSION } from '../src/protocol.js'
+import {
+  BROWSER_ROUTES,
+  MAX_BUILD_ID_LENGTH,
+  MAX_BY_ID_COUNT,
+  MAX_MESSAGE_LENGTH,
+  PROTOCOL_VERSION,
+} from '../src/protocol.js'
 import type { TabDiagnostic } from '../src/protocol.js'
 import { DEFAULT_LEASE_TTL_MS, mountBrowserRoutes } from '../src/routes.js'
 import type { BrowserRoutes } from '../src/routes.js'
@@ -64,6 +76,7 @@ function report(overrides: Partial<Record<string, unknown>> = {}): Record<string
     reader: 0,
     readerReason: 'uiSession.adapter.current',
     byIdCount: 3,
+    buildId: 'build-under-test',
     ...overrides,
   }
 }
@@ -77,6 +90,7 @@ function fields(row: TabDiagnostic | undefined): Omit<TabDiagnostic, 'at'> | nul
     reader: row.reader,
     readerReason: row.readerReason,
     byIdCount: row.byIdCount,
+    buildId: row.buildId,
   }
 }
 
@@ -110,6 +124,7 @@ describe('browser routes: the visibility intake', () => {
       reader: -1,
       readerReason: 'no-read-answered',
       byIdCount: 152,
+      buildId: 'build-under-test',
     })
     // The whole point of the separate field: this reading has no session to be a
     // fact about, and must not invent one.
@@ -164,6 +179,7 @@ describe('browser routes: the visibility intake', () => {
         reader: null,
         readerReason: null,
         byIdCount: null,
+        buildId: 'build-under-test',
       })
     }
     assert.equal(store.progressSnapshot()[0]?.reader, undefined)
@@ -208,6 +224,7 @@ describe('browser routes: the visibility intake', () => {
     delete withdrawal.reader
     delete withdrawal.readerReason
     delete withdrawal.byIdCount
+    delete withdrawal.buildId
     await server.call({ method: 'POST', path: BROWSER_ROUTES.visibility, body: withdrawal })
 
     const row = routes.diagnostics()[0]
@@ -215,6 +232,50 @@ describe('browser routes: the visibility intake', () => {
     assert.equal(row?.readerReason, 'uiSession.adapter.current')
     assert.equal(row?.byIdCount, 3)
     assert.equal(row?.sessionId, 'session-1')
+    // Same rule for the build identity: it is a separate field read on its own
+    // (the two arrived in different steps), but a body that omits it is still
+    // "no report", not "report nothing".
+    assert.equal(row?.buildId, 'build-under-test', 'a withdrawal must not blank the build identity')
+  })
+
+  it('records the build identity a tab reports, bounded', async (t) => {
+    const { routes, server } = mount()
+    t.after(() => routes.dispose())
+
+    await server.call({
+      method: 'POST',
+      path: BROWSER_ROUTES.visibility,
+      body: report({ buildId: 'another-build' }),
+    })
+    assert.equal(routes.diagnostics()[0]?.buildId, 'another-build')
+
+    // Oversized values are clamped like every other diagnostic, and a value that
+    // is not a non-empty string keeps the previous one instead of becoming a
+    // claim about a build the page never named.
+    await server.call({
+      method: 'POST',
+      path: BROWSER_ROUTES.visibility,
+      body: report({ buildId: 'x'.repeat(400) }),
+    })
+    const clamped = routes.diagnostics()[0]?.buildId
+    assert.equal(clamped?.length, MAX_BUILD_ID_LENGTH)
+
+    for (const buildId of [7, null, true, {}, '']) {
+      await server.call({
+        method: 'POST',
+        path: BROWSER_ROUTES.visibility,
+        body: report({ buildId }),
+      })
+      assert.equal(
+        routes.diagnostics()[0]?.buildId,
+        clamped,
+        `a ${JSON.stringify(buildId)} build identity is no report and must not blank the last one`,
+      )
+    }
+
+    // ...and a good report right after is still accepted.
+    await server.call({ method: 'POST', path: BROWSER_ROUTES.visibility, body: report({ buildId: 'third' }) })
+    assert.equal(routes.diagnostics()[0]?.buildId, 'third')
   })
 
   it('stops reporting a tab once its lease has gone stale', async (t) => {

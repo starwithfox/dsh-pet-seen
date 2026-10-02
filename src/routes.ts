@@ -16,12 +16,18 @@
  * session again is visible in `GET /state` within seconds instead of surfacing
  * as "the popup never goes away".
  *
+ * It also carries the page's **build identity** (step 6.1, `HANDOVER-STEP5.1`
+ * §6). The host stores it beside its own and publishes both; neither half ever
+ * decides that the other is stale, which is what keeps this a statement of fact
+ * rather than a verdict — `tools/probe-http.mjs` is the reader that judges.
+ *
  * @module dsh-pet-bridge/routes
  */
 
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import {
   BROWSER_ROUTES,
+  MAX_BUILD_ID_LENGTH,
   MAX_BY_ID_COUNT,
   MAX_MESSAGE_LENGTH,
   MAX_REQUEST_BODY_BYTES,
@@ -88,6 +94,17 @@ interface Lease {
   reader: SessionReaderIndex | null
   readerReason: string | null
   byIdCount: number | null
+  /**
+   * Build identity that tab's client half reported, or null when it never has.
+   *
+   * Kept next to the read diagnostics because it rides the same report and the
+   * same lease, and therefore gets the same bounded lifetime for free. It is a
+   * separate field rather than part of that group because the two arrived in
+   * different steps and are read for different reasons: `reader` says whether
+   * the drift self-check works, `buildId` says whether this page is even running
+   * the same build as the host that is answering it.
+   */
+  buildId: string | null
 }
 
 /** A mounted set of browser routes. */
@@ -99,10 +116,12 @@ export interface BrowserRoutes {
   /** Whether the given tab currently holds an effective focus lease. */
   readonly hasEffectiveLease: (tabId: string, at: number) => boolean
   /**
-   * The session-read diagnostics of every tab whose lease is still fresh.
+   * What every tab whose lease is still fresh last reported.
    *
-   * This is the only carrier for a `reader === -1` reading: the per-session
-   * snapshot needs a session id, and `-1` means there was none.
+   * Two facts per row, for two different questions: the read diagnostics (this
+   * is the only carrier for a `reader === -1` reading, because the per-session
+   * snapshot needs a session id and `-1` means there was none) and the client
+   * half's build identity, which has no per-session home at all.
    */
   readonly diagnostics: () => readonly TabDiagnostic[]
   /** Mounted route paths, in registration order. */
@@ -196,6 +215,7 @@ export function mountBrowserRoutes(deps: BrowserRoutesDeps): BrowserRoutes {
         reader: lease.reader,
         readerReason: lease.readerReason,
         byIdCount: lease.byIdCount,
+        buildId: lease.buildId,
         at: lease.at,
       })
     }
@@ -255,6 +275,18 @@ export function mountBrowserRoutes(deps: BrowserRoutesDeps): BrowserRoutes {
               : null,
           }
         : null
+      /*
+       * The build identity is read on its own rather than as part of the group
+       * above: the two facts come from different steps, and a report that names
+       * a build but no read index is a real (if unlikely) shape a future client
+       * could send. A value that is missing, empty or not a string keeps the
+       * tab's previous identity instead of blanking it — a withdrawal written by
+       * an older client must not erase what a newer one already said.
+       */
+      const reportedBuild = clampText(
+        typeof body.buildId === 'string' ? body.buildId : undefined,
+        MAX_BUILD_ID_LENGTH,
+      )
       const previous = leases.get(body.tabId)
       leases.set(body.tabId, {
         sessionId,
@@ -264,6 +296,7 @@ export function mountBrowserRoutes(deps: BrowserRoutesDeps): BrowserRoutes {
         reader: diagnostics === null ? previous?.reader ?? null : diagnostics.reader,
         readerReason: diagnostics === null ? previous?.readerReason ?? null : diagnostics.readerReason,
         byIdCount: diagnostics === null ? previous?.byIdCount ?? null : diagnostics.byIdCount,
+        buildId: reportedBuild ?? previous?.buildId ?? null,
       })
       // The client snapshot is the only place a session title reliably exists;
       // the host records the *shape* here and never invents one.

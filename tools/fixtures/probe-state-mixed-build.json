@@ -1,6 +1,6 @@
 {
   "v": 1,
-  "revision": 42,
+  "revision": 46,
   "petPort": 17322,
   "browserRoutes": true,
   "buildId": "3f9c1a7d2e5b8046",
@@ -10,17 +10,18 @@
     {
       "sessionId": "session-efd8c7e2-c274-46b4-acb2-94397c5aca75",
       "running": true,
-      "title": "准备第6步测试方案"
+      "title": "准备第6步测试方案",
+      "reader": 0
     }
   ],
   "browserTabs": [
     {
       "tabId": "29683a24-42eb-448a-af94-8939977ddcd5",
-      "sessionId": null,
-      "reader": -1,
-      "readerReason": "no-read-answered",
+      "sessionId": "session-efd8c7e2-c274-46b4-acb2-94397c5aca75",
+      "reader": 0,
+      "readerReason": "uiSession.adapter.current",
       "byIdCount": 169,
-      "buildId": "3f9c1a7d2e5b8046",
+      "buildId": "c41d9e73aa20b5f1",
       "at": 1790908816747
     }
   ]

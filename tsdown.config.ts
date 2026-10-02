@@ -13,8 +13,26 @@
  *   preset is not published, so it is reproduced here. This half renders no UI
  *   and therefore imports nothing at all — the bundle is the strongest possible
  *   form of the client bundle-purity gate.
+ *
+ * Both halves are also handed the **build identity** (`tools/build-id.mjs`
+ * through `define`): one value for both, derived from the version and every file
+ * under `src/`. That is what makes "are the host half and the page half the same
+ * build?" answerable by comparing two strings — the handshake added in step 6.1.
+ * A `define` is used rather than a generated source file so that nothing tracked
+ * has to be regenerated, and the build stays deterministic.
  */
+import { dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'tsdown'
+import { computeBuildId, readPluginVersion } from './tools/build-id.mjs'
+
+const root = dirname(fileURLToPath(import.meta.url))
+
+/** Values baked into both bundles; the source declares them as ambient consts. */
+const buildIdentity = {
+  __PET_BUILD_ID__: JSON.stringify(computeBuildId(root)),
+  __PET_PLUGIN_VERSION__: JSON.stringify(readPluginVersion(root)),
+}
 
 export default defineConfig([
   {
@@ -26,6 +44,7 @@ export default defineConfig([
     outDir: 'lib',
     clean: false,
     outExtensions: () => ({ js: '.js' }),
+    define: buildIdentity,
     // `noCheck` on purpose: type checking is `tsconfig.check.json`, which
     // resolves the harness declarations from the *live* DSH installation. A
     // bundler run must not depend on a developer's DSH layout.
@@ -40,6 +59,7 @@ export default defineConfig([
     outDir: 'client',
     clean: false,
     outExtensions: () => ({ js: '.js' }),
+    define: buildIdentity,
     deps: { neverBundle: [] },
     outputOptions: {
       banner: 'window.__ModuleLoader__.load({ id: "dsh-pet-bridge", factory: (require) => {',

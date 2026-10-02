@@ -25,6 +25,16 @@
  *     install or an unbuilt bundle — see `IMPL-LOG` step 5.1). `DRIFT` is the
  *     other non-zero reading: sessions are visible but none is named.
  *
+ *   - the **build handshake** added in step 6.1: the host states which build it
+ *     is (`pluginVersion` / `buildId` on the header line) and every tab states
+ *     which build its client half is (per-row `build`). A row whose id differs
+ *     from the host's is marked `MIXED`, and one that carries no id at all is
+ *     marked `OLD`. Both mean the two halves did not come from one build — the
+ *     state that used to be indistinguishable from a healthy install while the
+ *     drift self-check was silently dead (`HANDOVER-STEP5.1` §4.2). As with
+ *     `STALE`/`DRIFT`, this tool only reports; `probe-http.mjs` is the one that
+ *     turns any of them into a failing exit code.
+ *
  * Read-only. Exits 1 when `/state` cannot be read.
  *
  * USAGE
@@ -61,7 +71,8 @@ if (state !== null) {
   const notices = Array.isArray(state.notices) ? state.notices : []
   console.log(
     `controlPort=${bridge.controlPort} status=${status} revision=${state.revision}`
-    + ` petPort=${state.petPort ?? '-'} notices=${notices.length}`,
+    + ` petPort=${state.petPort ?? '-'} notices=${notices.length}`
+    + ` plugin=${state.pluginVersion ?? '-'} build=${state.buildId ?? '-'}`,
   )
   for (const session of state.sessions ?? []) {
     console.log(`session ${short(session.sessionId)} running=${String(session.running)} title="${session.title ?? ''}"`
@@ -79,9 +90,14 @@ if (state !== null) {
     console.log('(no live tab diagnostic: nothing has reported yet, or the last report aged out of the'
       + ' lease TTL — the page renews it only while visible and focused)')
   }
+  const hostBuild = typeof state.buildId === 'string' && state.buildId !== '' ? state.buildId : null
   for (const tab of tabs) {
+    const noBuild = typeof tab.buildId !== 'string' || tab.buildId === ''
     console.log(`tab ${short(tab.tabId)} reader=${tab.reader ?? '-'} (${tab.readerReason ?? '-'})`
-      + ` byId=${tab.byIdCount ?? '-'} session=${short(tab.sessionId)}`
+      + ` byId=${tab.byIdCount ?? '-'} session=${short(tab.sessionId)} build=${noBuild ? '-' : tab.buildId}`
+      + (noBuild ? '  <-- OLD: no build id (client half predates the handshake)' : '')
+      + (!noBuild && hostBuild !== null && tab.buildId !== hostBuild
+        ? `  <-- MIXED: client build ${tab.buildId} != host build ${hostBuild}` : '')
       + (typeof tab.reader !== 'number' ? '  <-- STALE: client half predates the self-check (no reader field)' : '')
       + (tab.reader === -1 && (tab.byIdCount ?? 0) > 0 ? '  <-- DRIFT: sessions visible, none named' : ''))
   }

@@ -25,7 +25,7 @@ import { describe, it } from 'node:test'
 import type { StatePayload } from '../src/protocol.js'
 import { bridge } from './harness.js'
 
-const { PROTOCOL_VERSION, startControlServer, tokenFilePath, writeTokenFile } = bridge
+const { BUILD_ID, PLUGIN_VERSION, PROTOCOL_VERSION, startControlServer, tokenFilePath, writeTokenFile } = bridge
 
 /** A shrink-wrapped file identity, or null when the file does not exist. */
 function statOrNull(path: string): { size: number, mtimeMs: number } | null {
@@ -47,6 +47,8 @@ const idleDeps = {
     petPort: null,
     browserRoutes: false,
     browserTabs: [],
+    buildId: BUILD_ID,
+    pluginVersion: PLUGIN_VERSION,
   }),
   onHello: () => {},
   onAck: () => null,
