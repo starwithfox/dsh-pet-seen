@@ -1,0 +1,29 @@
+{
+  "v": 1,
+  "revision": 41,
+  "petPort": 17322,
+  "browserRoutes": true,
+  "notices": [],
+  "sessions": [
+    {
+      "sessionId": "session-efd8c7e2-c274-46b4-acb2-94397c5aca75",
+      "running": true,
+      "title": "准备第6步测试方案"
+    },
+    {
+      "sessionId": "session-6c3ad2d3-9b8a-4e83-b5a4-0222a22fb8a1",
+      "running": false,
+      "title": ""
+    }
+  ],
+  "browserTabs": [
+    {
+      "tabId": "29683a24-42eb-448a-af94-8939977ddcd5",
+      "sessionId": "session-efd8c7e2-c274-46b4-acb2-94397c5aca75",
+      "reader": null,
+      "readerReason": null,
+      "byIdCount": null,
+      "at": 1790908816747
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "v": 1,
+  "revision": 43,
+  "petPort": 17322,
+  "browserRoutes": true,
+  "notices": [],
+  "sessions": [
+    {
+      "sessionId": "session-efd8c7e2-c274-46b4-acb2-94397c5aca75",
+      "running": true,
+      "title": "准备第6步测试方案",
+      "reader": 0
+    }
+  ],
+  "browserTabs": [
+    {
+      "tabId": "29683a24-42eb-448a-af94-8939977ddcd5",
+      "sessionId": "session-efd8c7e2-c274-46b4-acb2-94397c5aca75",
+      "reader": 0,
+      "readerReason": "uiSession.adapter.current",
+      "byIdCount": 169,
+      "at": 1790908816747
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "v": 1,
+  "revision": 44,
+  "petPort": 17322,
+  "browserRoutes": true,
+  "notices": [],
+  "sessions": [
+    {
+      "sessionId": "session-efd8c7e2-c274-46b4-acb2-94397c5aca75",
+      "running": true,
+      "title": "准备第6步测试方案",
+      "reader": 0
+    }
+  ],
+  "browserTabs": []
+}

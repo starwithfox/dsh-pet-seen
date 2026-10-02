@@ -19,6 +19,12 @@
  *     `reader` on the session lines they can legitimately be absent, and their
  *     absence is printed rather than silently omitted.
  *
+ *     A row that exists but carries **no `reader` field** is a different thing
+ *     and is marked `STALE`: the tab is alive enough to hold a lease, yet its
+ *     client half never reported the self-check, so it predates step 5 (a stale
+ *     install or an unbuilt bundle — see `IMPL-LOG` step 5.1). `DRIFT` is the
+ *     other non-zero reading: sessions are visible but none is named.
+ *
  * Read-only. Exits 1 when `/state` cannot be read.
  *
  * USAGE
@@ -76,6 +82,7 @@ if (state !== null) {
   for (const tab of tabs) {
     console.log(`tab ${short(tab.tabId)} reader=${tab.reader ?? '-'} (${tab.readerReason ?? '-'})`
       + ` byId=${tab.byIdCount ?? '-'} session=${short(tab.sessionId)}`
+      + (typeof tab.reader !== 'number' ? '  <-- STALE: client half predates the self-check (no reader field)' : '')
       + (tab.reader === -1 && (tab.byIdCount ?? 0) > 0 ? '  <-- DRIFT: sessions visible, none named' : ''))
   }
   for (const notice of notices) {

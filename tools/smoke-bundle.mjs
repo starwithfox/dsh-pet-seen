@@ -15,6 +15,22 @@
  * 3. `client/client.js` is a `window.__ModuleLoader__.load` factory for
  *    `dsh-pet-bridge` and contains **no** runtime import or `require` call.
  * 4. `cordis.patch.yml` inserts exactly the entry the package name implies.
+ * 5. `package.json` wires the bundle, client and patch entries.
+ * 6. Neither built artifact carries **probe residue** or a **local absolute
+ *    path** (added 2026-10-02, step 5.1).
+ *
+ * Check 6 exists because a fake probe reached an installed copy once: during
+ * step 4.3 a tamper probe appended `// tamper-probe` to the worktree
+ * `client/client.js`, the web profile's `file:` install shared that file's inode
+ * (hard link), so the line propagated into `node_modules`, the probe's restore
+ * then broke the link — and the installed client half stayed frozen at
+ * "4.2-era artifact + probe residue" for a day (see `IMPL-LOG` step 5.1). A line
+ * of text is harmless in itself; the reason it is a gate is that nothing said
+ * so, and that a `npm pack` in that window would have shipped it.
+ *
+ * ⇒ **Convention for future probes**: a line appended to a *built artifact* to
+ * prove a check bites must contain `tamper-probe` (or `probe-residue`). Those
+ * two strings are the denylist; use anything else and this gate cannot help you.
  *
  * @module tools/smoke-bundle
  */
@@ -101,6 +117,45 @@ check('package.json wires the bundle and client entries', () => {
   assert.equal(manifest.exports['./client'], './client/client.js')
   assert.equal(manifest.exports['./cordis.patch.yml'], './cordis.patch.yml')
   assert.equal(manifest.main, 'lib/index.js')
+})
+
+/* 6. Artifact hygiene: no probe residue, no local paths. ------------------ */
+const artifacts = { 'lib/index.js': hostSource, 'client/client.js': clientSource }
+
+/*
+ * Residue a fake probe leaves when it edits a *built* artifact by hand. Both
+ * halves are shipped, and the web profile's `file:` install hard-links them, so
+ * an appended line can reach a user's `node_modules` (it did — step 5.1).
+ */
+const PROBE_RESIDUE = ['tamper-probe', 'probe-residue']
+check('built artifacts carry no probe residue', () => {
+  for (const [name, source] of Object.entries(artifacts)) {
+    for (const marker of PROBE_RESIDUE) {
+      assert.equal(
+        source.includes(marker),
+        false,
+        `${name} contains the probe marker "${marker}": a fake-probe edit was baked into a built artifact`,
+      )
+    }
+  }
+})
+
+/*
+ * The bundle must not leak the machine it was built on. This was a manual
+ * pre-commit check before; it is a gate now, because step 5.1 showed how easily
+ * a stale artifact outlives the inspection that was supposed to cover it.
+ */
+const LOCAL_PATHS = ['C:\\Users', 'C:/Users', 'star_fox', 'deepseek-harness-pet-main', 'file:///']
+check('built artifacts carry no local absolute paths', () => {
+  for (const [name, source] of Object.entries(artifacts)) {
+    for (const marker of LOCAL_PATHS) {
+      assert.equal(
+        source.includes(marker),
+        false,
+        `${name} contains the local path fragment "${marker}"`,
+      )
+    }
+  }
 })
 
 if (failures.length > 0) {
