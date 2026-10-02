@@ -29,8 +29,10 @@
  *                                 [--cookie "<name>=<value>"] [--no-auth]
  *                                 [--no-sandbox]
  *   node tools/cdp-acceptance.mjs --gate-c [--other-session <sessionId>]
+ *   node tools/cdp-acceptance.mjs --measure-only [--session <sessionId>]
+ *                                 [--out measure.json] [--force-out]
  *
- * TWO MODES
+ * THREE MODES
  *   Default: the Gate A runner, one tab, one session — the below-fold
  *   counterexample and the positive stage, on a notice this tab is offered.
  *   `--gate-c`: open a **second tab on another session** and run the
@@ -41,6 +43,13 @@
  *   which is the only way to test "the user is looking at the other session".
  *   Without `--other-session` the driver picks whichever session in `/state` is
  *   holding the most unconfirmed notices.
+ *   `--measure-only`: **read-only reconnaissance**, no scrolling and no
+ *   `/seen`. It lands on the session, reads the host's open notices for it and
+ *   measures each one's result group in the page, so the one hard constraint
+ *   behind A2 — "is there at least a band-height of content *above* the reply"
+ *   (`belowFoldFacts().stageable`, i.e. `wanted >= 0`) — is known **before** a
+ *   two-minute gate run is risked. It writes its own report and exits 0 even
+ *   when the material is unstageable; the numbers are the result, not a verdict.
  *
  * REPORTS ARE EVIDENCE
  *   An `--out` path that already exists is **refused** (exit 3), because the
@@ -159,6 +168,16 @@ const OTHER_SESSION = flag('other-session', null)
  * asks for "blurred **or** background", and the background half is phase C1.
  */
 const GATE_C_BLUR = has('gate-c-blur')
+/**
+ * Read-only reconnaissance: measure the material without driving anything.
+ *
+ * A2's one hard constraint is that the content **above** the reply must be at
+ * least a band-height (`belowFoldFacts().stageable`), and that is a property of
+ * the live session, not of the runner. Measuring it here turns "run the gate and
+ * find out it was a SKIP" into a few seconds of reading, which matters while a
+ * notice is live and can still be re-minted.
+ */
+const MEASURE_ONLY = has('measure-only')
 
 /** The runner under test. Loaded from disk so it cannot drift from the manual path. */
 const RUNNER_PATH = join(fileURLToPath(new URL('.', import.meta.url)), 'acceptance-client-page.js')
@@ -609,6 +628,156 @@ async function probeSession(cdp) {
       window.fetch = original
     }
   })()`, { awaitPromise: true, timeoutMs: 20000 })
+}
+
+/* ----------------------------------------------------------- measure-only */
+
+/** Flow items / kinds the *shipping* client measures for a turn's result. */
+const RESULT_ITEM_KINDS = ['assistant-step', 'turn-error', 'turn-max-tokens']
+/** The runner's first below-fold margin (`BELOW_FOLD_MARGINS_PX[0]`). */
+const BELOW_FOLD_MARGIN_PX = 16
+
+/**
+ * Measure one turn's reply against the visible band, read-only.
+ *
+ * Mirrors `belowFoldFacts()` in `acceptance-client-page.js` and
+ * `turnResultBox()` in `src/client/visibility.ts`: same selectors, same union
+ * rule, same arithmetic. It is a mirror on purpose — the point is to predict
+ * what the gate will attempt, so a *different* theory of the layout would defeat
+ * the exercise — and every figure that decides the prediction is printed next to
+ * the prediction itself, so a mismatch is visible rather than silent.
+ *
+ * @param cdp - the page connection.
+ * @param turn - the turn whose reply the notice points at.
+ * @returns the geometry, or `{ error }`.
+ */
+async function measureNoticeGeometry(cdp, turn) {
+  const raw = await evaluate(cdp, `(() => {
+    const turn = ${JSON.stringify(turn)}
+    const active = document.querySelector("[data-phase='active']")
+    const scope = active ?? document
+    const scroll = scope.querySelector('[data-conversation-scroll]') ?? scope.querySelector('[data-chat-flow]')
+    if (scroll === null) return JSON.stringify({ error: 'no scroll container in the page' })
+    const items = [...scope.querySelectorAll('[data-chat-turn="' + turn + '"]')]
+    /* Union of the rendered (non-zero) items of one kind, most authoritative first. */
+    const union = (elements) => {
+      let top = Infinity
+      let bottom = -Infinity
+      for (const element of elements) {
+        const rect = element.getBoundingClientRect()
+        if (rect.width <= 0 || rect.height <= 0) continue
+        if (rect.top < top) top = rect.top
+        if (rect.bottom > bottom) bottom = rect.bottom
+      }
+      return bottom <= top ? null : { top, bottom }
+    }
+    let reply = null
+    let replyKind = null
+    for (const kind of ${JSON.stringify(RESULT_ITEM_KINDS)}) {
+      const box = union(items.filter((element) => element.getAttribute('data-chat-flow-kind') === kind))
+      if (box !== null && box !== undefined) { reply = box; replyKind = kind; break }
+    }
+    const others = union(items.filter((element) => !${JSON.stringify(RESULT_ITEM_KINDS)}.includes(element.getAttribute('data-chat-flow-kind'))))
+    const rect = scroll.getBoundingClientRect()
+    const viewportTop = typeof window.scrollY === 'number' ? window.scrollY : 0
+    const bandTop = Math.max(rect.top, viewportTop)
+    const bandBottom = Math.min(rect.bottom, viewportTop + window.innerHeight)
+    const bandHeight = Math.max(0, bandBottom - bandTop)
+    if (reply === null) {
+      return JSON.stringify({
+        turn, replyKind: null, bandHeight: Math.round(bandHeight),
+        renderedKinds: items.map((element) => element.getAttribute('data-chat-flow-kind')),
+        reason: 'this turn renders no result row, so it can never be watched at all',
+      })
+    }
+    /* Content coordinates: same transformation the runner uses. */
+    const contentY = (viewportY) => viewportY - rect.top + scroll.scrollTop
+    const maxScrollTop = Math.max(0, (scroll.scrollHeight ?? 0) - (scroll.clientHeight ?? 0))
+    const wanted = Math.round(contentY(reply.top) - bandHeight - ${String(BELOW_FOLD_MARGIN_PX)})
+    return JSON.stringify({
+      turn,
+      replyKind,
+      replyHeight: Math.round(reply.bottom - reply.top),
+      bandHeight: Math.round(bandHeight),
+      currentScrollTop: Math.round(scroll.scrollTop),
+      maxScrollTop: Math.round(maxScrollTop),
+      replyTopContentY: Math.round(contentY(reply.top)),
+      requiredScrollTop: wanted,
+      clampedTo: Math.max(0, Math.min(maxScrollTop, wanted)),
+      roomAboveShort: Math.max(0, -wanted),
+      /* The gate's own hard constraint, computed exactly as the runner computes it. */
+      stageable: wanted >= 0,
+      otherRowKinds: items
+        .filter((element) => !${JSON.stringify(RESULT_ITEM_KINDS)}.includes(element.getAttribute('data-chat-flow-kind')))
+        .map((element) => element.getAttribute('data-chat-flow-kind')),
+      otherRowOverlap: others === null ? null : Math.round(Math.min(others.bottom, bandBottom) - Math.max(others.top, bandTop)),
+    })
+  })()`)
+  return JSON.parse(raw ?? '{}')
+}
+
+/**
+ * The `--measure-only` run: report the material's geometry, change nothing.
+ *
+ * @param context - the tab connection plus the identifiers already asserted.
+ * @returns the process exit code: 0 measured (even when unusable), 3 driver error.
+ */
+async function runMeasureOnly(context) {
+  const { cdp, startedAt, expectedSession, ourTabId } = context
+  const checks = []
+  const record = (id, verdict, detail) => checks.push({ id, verdict, detail })
+  const bridge = JSON.parse(readFileSync(join(homedir(), '.dsh', 'pet-bridge.json'), 'utf8'))
+  const response = await fetch(`http://127.0.0.1:${bridge.controlPort}/state?token=${encodeURIComponent(bridge.token)}`)
+  const state = response.ok ? await response.json() : null
+  if (state === null) {
+    log('measure-only: GET /state did not answer')
+    return 3
+  }
+  const open = (state.notices ?? [])
+    .filter((notice) => notice.sessionId === expectedSession)
+    .filter((notice) => notice.state === 'pending' || notice.state === 'shown')
+  const noticeRows = []
+  for (const notice of open) {
+    const turn = Number(notice.targetTurnRef)
+    const geometry = Number.isSafeInteger(turn) ? await measureNoticeGeometry(cdp, turn) : { error: 'no usable targetTurnRef' }
+    noticeRows.push({ noticeId: notice.noticeId, turn: Number.isSafeInteger(turn) ? turn : null, state: notice.state, geometry })
+    log(`notice ${String(notice.noticeId).slice(0, 8)} turn=${String(notice.targetTurnRef)} (${String(notice.state)}): `
+      + (geometry.error === undefined
+        ? `reply ${String(geometry.replyHeight)}px vs band ${String(geometry.bandHeight)}px,`
+          + ` wanted scrollTop ${String(geometry.requiredScrollTop)} of max ${String(geometry.maxScrollTop)},`
+          + ` stageable=${String(geometry.stageable)}`
+          + (geometry.roomAboveShort > 0 ? ` (content above is ${String(geometry.roomAboveShort)}px short)` : '')
+          + `, other rows: ${(geometry.otherRowKinds ?? []).join(', ') || '(none)'}`
+        : String(geometry.error)))
+  }
+  const stageable = noticeRows.filter((row) => row.geometry.stageable === true)
+  record('M0-session', noticeRows.length > 0 ? 'PASS' : 'SKIP',
+    `${noticeRows.length} open notice(s) for ${expectedSession}`)
+  record('M1-stageable', stageable.length > 0 ? 'PASS' : 'FAIL',
+    stageable.length > 0
+      ? `${stageable.length} of ${noticeRows.length} notice(s) can be staged below the fold: `
+        + stageable.map((row) => `turn ${String(row.turn)}:${String(row.noticeId).slice(0, 8)}`).join(', ')
+      : 'no open notice has a band-height of content above its reply, so A2 (and therefore A3) cannot be built')
+  const report = {
+    verdict: stageable.length > 0 ? 'MATERIAL-OK' : 'MATERIAL-UNSTAGEABLE',
+    mode: 'measure-only',
+    startedAt,
+    finishedAt: new Date().toISOString(),
+    pageUrl: PAGE_URL,
+    debugPort: context.port,
+    sessionId: expectedSession,
+    ourTabId,
+    checks,
+    notices: noticeRows,
+    console: context.consoleLines,
+  }
+  const wrote = writeReport(report)
+  log('================ SUMMARY ================')
+  for (const check of checks) log(`${String(check.verdict).padEnd(13)} ${check.id} :: ${check.detail}`)
+  log(`VERDICT: ${report.verdict}`)
+  if (!wrote) return 3
+  log(`report written to ${OUT_PATH}`)
+  return 0
 }
 
 /* ------------------------------------------------------------------ gate C */
@@ -1609,6 +1778,21 @@ async function main() {
         expectedSession: clientSession,
         cookie,
         tabAId: ourTabId,
+      })
+    }
+
+    /*
+     * Read-only reconnaissance leaves here: it needs the page, the session
+     * assertion and the host snapshot, and none of the driving below.
+     */
+    if (MEASURE_ONLY) {
+      return await runMeasureOnly({
+        cdp,
+        port: browser.port,
+        consoleLines,
+        startedAt,
+        expectedSession: clientSession,
+        ourTabId,
       })
     }
 
