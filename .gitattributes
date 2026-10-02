@@ -1,0 +1,5 @@
+# 统一换行符，避免 Windows/Linux 检出差异。
+# 这条不是洁癖：`lib/` 与 `client/` 是【入库产物】，而 `npm run check:artifacts`
+# 靠 `git diff HEAD -- lib client` 判定「产物是不是当前源码的」——
+# 一旦检出把产物 CRLF 化，这道闸门就会对着一个假的差异翻车。
+* text=auto eol=lf

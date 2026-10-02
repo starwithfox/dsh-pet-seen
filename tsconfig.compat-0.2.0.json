@@ -54,8 +54,8 @@
     "paths": {
       "@deepseek-ai/cordis": ["C:/Users/star_fox/.dsh/profiles/node_modules/@deepseek-ai/cordis/lib/types/index.d.ts"],
       "@deepseek-ai/schemastery": ["C:/Users/star_fox/.dsh/profiles/node_modules/@deepseek-ai/schemastery/lib/types/index.d.ts"],
-      "@deepseek-ai/dsh-session": ["../_scratch/dsh-session-0.2.0-rc.2/lib/types/index.d.ts"],
-      "@deepseek-ai/dsh-agent": ["../_scratch/dsh-agent-0.2.0-rc.2/lib/types/index.d.ts"],
+      "@deepseek-ai/dsh-session": ["_scratch/dsh-session-0.2.0-rc.2/lib/types/index.d.ts"],
+      "@deepseek-ai/dsh-agent": ["_scratch/dsh-agent-0.2.0-rc.2/lib/types/index.d.ts"],
       "@deepseek-ai/dsh-host-webserver": ["C:/Users/star_fox/.dsh/profiles/node_modules/@deepseek-ai/dsh-host-webserver/lib/types/index.d.ts"],
       "@deepseek-ai/dsh-client-connection": ["C:/Users/star_fox/.dsh/profiles/node_modules/@deepseek-ai/dsh-client-connection/lib/types/index.d.ts"]
     }

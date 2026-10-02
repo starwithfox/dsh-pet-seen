@@ -161,10 +161,10 @@ Harness 的 HTTP 命名空间。独立控制端口的好处：
 
 ```powershell
 # 主推：软链（Junction）。改源码不需要重装，见 3.2
-dsh plugin add --profile web link:<克隆目录>\dsh-plugin
+dsh plugin add --profile web link:<克隆目录>
 
 # 备选：实体拷贝（硬链接镜像）。升级语义与上面不同，见 3.2
-dsh plugin add --profile web file:<克隆目录>\dsh-plugin
+dsh plugin add --profile web file:<克隆目录>
 
 # registry 渠道：等 0.1.1 正式发布之后才有意义
 # （在此之前 registry 上是同名占位版本，别拿它当正式包）
@@ -173,10 +173,13 @@ dsh plugin --profile web add dsh-pet-seen
 # 装完必须重启 DSH 才会加载宿主半边（这一步会中断正在运行的会话）
 ```
 
+> **本仓库就是插件本身**：仓库根目录即插件目录（`dsh-plugin/` 那一层是它还在桌宠仓库里时的历史包袱）
+> ⇒ 上面 `link:` / `file:` 指的都是**仓库根**。桌宠接收端（Python）不在本仓库内，见 §7。
+>
 > **克隆后不需要构建**：`lib/index.js`（宿主侧）与 `client/client.js`（浏览器侧）两个产物**已入库**，
 > 装的过程也不需要 Node.js 或任何工具链。
 >
-> **只有改了 `src/` 才需要构建**（需要 Node 22+）：`cd dsh-plugin` → `npm install` → `npm run build`。
+> **只有改了 `src/` 才需要构建**（需要 Node 22+）：`cd <克隆目录>` → `npm install` → `npm run build`。
 > 改完必须**把 `src/` 与重建后的产物一起提交**——`npm run check` 会先 `build`、再比对 HEAD 里的产物，
 > 改了源码却没把产物一起提交就会红；`prepack` 在 `npm pack` / `npm publish` 前自动重建兜底。
 > 产物由 tsdown 生成，**不要手改**。
@@ -213,7 +216,7 @@ dsh plugin --profile web add dsh-pet-seen
 
 ### 配置
 
-`dsh-plugin/cordis.patch.yml` 的 `config` 段：
+`cordis.patch.yml` 的 `config` 段：
 
 | 键 | 默认 | 含义 |
 | --- | --- | --- |
@@ -557,7 +560,7 @@ type _SessionPinned = Assert<Satisfies<import('@deepseek-ai/dsh-session').Sessio
 ## 6. 目录
 
 ```
-dsh-plugin/
+dsh-pet-seen/            # 本仓库根目录 = 插件目录（没有 dsh-plugin/ 那一层）
 ├── package.json          # dsh.bundle.patch + dsh.client.{platform,inject}
 ├── cordis.patch.yml      # 把插件挂进 profile loader 树 + 默认配置
 ├── LICENSE               # MIT，署名 starwithfox（随包发布）
