@@ -411,7 +411,15 @@ function makePage(options: {
   }
   Object.defineProperty(scrollElement, 'scrollTop', {
     get: () => scroll.top,
-    set: (value: number) => { scroll.top = value },
+    set: (value: number) => {
+      scroll.top = value
+      /*
+       * The fake client reports from here, not from a timer: `scrollTop` is the
+       * only input `replyIsReadable()` has that can change at runtime. See
+       * `reportSeenIfReadable()` for the race this removes.
+       */
+      reportSeenIfReadable()
+    },
     enumerable: true,
   })
 
@@ -551,26 +559,47 @@ function makePage(options: {
    * being handed a verdict, and it keeps quiet through the below-fold phase —
    * where the reply is deliberately not readable — without needing to know which
    * phase the runner is in.
+   *
+   * It is driven by the page double's geometry (the `scrollTop` setter above)
+   * rather than by a wall clock; `reportSeenIfReadable()` records why.
    */
-  let clientTimer: ReturnType<typeof setInterval> | null = null
-  if (options.reportSeenWhenInView) {
-    clientTimer = setInterval(() => {
-      if (noticesPolls < enableSeenAfterPolls) return
-      if (!replyIsReadable(NOTICE_TURN)) return
-      void (windowStub.fetch as typeof fetchStub)('/pet-bridge/seen', {
-        method: 'POST',
-        body: JSON.stringify({
-          v: 1, noticeId: NOTICE_ID, runId: 'run-smoke', sessionId: SESSION_ID,
-          tabId: 'tab-smoke', observed: true,
-        }),
-      })
-    }, 20)
+  let reporting = options.reportSeenWhenInView
+
+  /**
+   * The fake client's one reporting step.
+   *
+   * A periodic reporter raced the runner's own clock. Every wait in this suite is
+   * tuned to 0 ms, so the runner's A3 judging window is two `await`s wide
+   * (`SETTLE_MS`, then `dwellMs + HOLD_EXTRA_MS`) while a `setInterval` reporter
+   * only advanced every 20 ms: whether a tick landed inside that window was left
+   * to the event loop, and the full suite — thirteen test files in one process —
+   * pushed it red in roughly one run out of three. The verdict then came from the
+   * reporter's phase rather than from the rule Gate A claims to check.
+   *
+   * Hooking the scroll removes the race instead of narrowing it, because
+   * `scrollTop` is the only input `replyIsReadable()` depends on that can change
+   * at runtime. "Report while readable" now resolves on the runner's own actions:
+   * the counterexample always scrolls the reply out of the band first (so the
+   * phase that must stay quiet still does), and the positive stage always scrolls
+   * it back in (so every report is attributable to the dwell being measured).
+   */
+  function reportSeenIfReadable(): void {
+    if (!reporting) return
+    if (noticesPolls < enableSeenAfterPolls) return
+    if (!replyIsReadable(NOTICE_TURN)) return
+    void (windowStub.fetch as typeof fetchStub)('/pet-bridge/seen', {
+      method: 'POST',
+      body: JSON.stringify({
+        v: 1, noticeId: NOTICE_ID, runId: 'run-smoke', sessionId: SESSION_ID,
+        tabId: 'tab-smoke', observed: true,
+      }),
+    })
   }
 
   return {
     window: windowStub,
     document: documentElement,
-    stop: () => { if (clientTimer !== null) clearInterval(clientTimer) },
+    stop: () => { reporting = false },
   }
 }
 
