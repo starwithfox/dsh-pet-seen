@@ -20,7 +20,7 @@
  *   plugin work happens. A control port that is already taken disables the
  *   bridge loudly instead of leaking a token to whoever owns the port.
  *
- * @module dsh-pet-bridge/control-server
+ * @module dsh-pet-seen/control-server
  */
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'

@@ -15,7 +15,7 @@
  * the pins exist to prevent. Keeping the mechanism on a shared module boundary
  * means one definition, used by both the pins below and `tests/pins.test.ts`.
  *
- * @module dsh-pet-bridge/pins
+ * @module dsh-pet-seen/pins
  */
 
 import type { TurnEndKind } from './protocol.js'

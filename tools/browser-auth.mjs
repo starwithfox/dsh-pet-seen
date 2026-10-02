@@ -123,9 +123,9 @@ export function splitCookie(cookie) {
  * disagree in *both* shape and `rev` (measured 2026-09-30; `working-docs/
  * DESKTOP-PROBE-2026-09-30.md` §5):
  *
- *   boot JSON roster    {"id":"dsh-pet-bridge","url":"plugins/??dsh-pet-bridge/client.js&rev=…",…}
+ *   boot JSON roster    {"id":"dsh-pet-seen","url":"plugins/??dsh-pet-seen/client.js&rev=…",…}
  *                       → the plugin stands alone, so this URL serves its own bundle
- *   inline `<script src>`  plugins/??@deepseek-ai/…,dsh-pet-bridge/client.js&amp;rev=…
+ *   inline `<script src>`  plugins/??@deepseek-ai/…,dsh-pet-seen/client.js&amp;rev=…
  *                       → one of 65 packages, escaped, and that group rev does NOT resolve to a
  *                         single-file path (fetching it 404s)
  *
@@ -144,8 +144,8 @@ export function splitCookie(cookie) {
 export function resolvePetClientUrl(html, scriptUrls = []) {
   const isStandalone = (candidate) =>
     candidate !== undefined
-    && /(?:^|\/)plugins\/\?\?dsh-pet-bridge\/client\.js[&"'\s]/.test(candidate)
-  const fromBootJson = /"id"\s*:\s*"dsh-pet-bridge"[^}]*?"url"\s*:\s*"([^"]+)"/.exec(html)?.[1]
-  const fromScript = scriptUrls.find((url) => url.includes('dsh-pet-bridge/client.js'))
+    && /(?:^|\/)plugins\/\?\?dsh-pet-seen\/client\.js[&"'\s]/.test(candidate)
+  const fromBootJson = /"id"\s*:\s*"dsh-pet-seen"[^}]*?"url"\s*:\s*"([^"]+)"/.exec(html)?.[1]
+  const fromScript = scriptUrls.find((url) => url.includes('dsh-pet-seen/client.js'))
   return [fromBootJson, fromScript].find(isStandalone)
 }

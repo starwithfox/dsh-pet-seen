@@ -21,7 +21,7 @@
  * decides that the other is stale, which is what keeps this a statement of fact
  * rather than a verdict — `tools/probe-http.mjs` is the reader that judges.
  *
- * @module dsh-pet-bridge/routes
+ * @module dsh-pet-seen/routes
  */
 
 import type { IncomingMessage, ServerResponse } from 'node:http'

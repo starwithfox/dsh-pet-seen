@@ -333,6 +333,21 @@ describe('client wiring: reporting an observation', () => {
     assert.equal(page.calls.filter(call => call.path.endsWith('/seen')).length, 1)
   })
 
+  it('keeps reporting after the harness remounts the conversation slot', async () => {
+    // A session switch replaces `[data-chat-flow]` / `[data-conversation-scroll]`.
+    // The client builds its DOM face once (`createVisibilityDeps()` at `apply()`),
+    // so if that face is captured by value it starts measuring the detached pair
+    // — every rectangle 0, `isTurnVisible` permanently false — and `/seen` stops
+    // for the life of the page with no log line. That was the 2026-10-02 field
+    // report; this case is the criterion that the face follows the document.
+    const page = startClient({ notices: () => [notice('n1', 3)] })
+    page.document.setItems([item(3, 'assistant-step', { top: 200, bottom: 4_000 })])
+    page.document.remount([item(3, 'assistant-step', { top: 200, bottom: 4_000 })])
+
+    await waitFor(() => posted(page).some(path => path.endsWith('/seen')), 'a /seen report')
+    assert.equal(page.calls.find(call => call.path.endsWith('/seen'))?.body.noticeId, 'n1')
+  })
+
   it('does not report while the answer is off screen', async () => {
     const page = startClient({ notices: () => [notice('n1', 3)] })
     page.document.setItems([

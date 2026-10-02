@@ -13,7 +13,7 @@
  * 2. Its only external imports are Node builtins and
  *    `@deepseek-ai/schemastery`.
  * 3. `client/client.js` is a `window.__ModuleLoader__.load` factory for
- *    `dsh-pet-bridge` and contains **no** runtime import or `require` call.
+ *    `dsh-pet-seen` and contains **no** runtime import or `require` call.
  * 4. `cordis.patch.yml` inserts exactly the entry the package name implies.
  * 5. `package.json` wires the bundle, client and patch entries.
  * 6. Neither built artifact carries **probe residue** or a **local absolute
@@ -72,7 +72,7 @@ const check = (label, fn) => {
 /* 1. Host bundle loads and exposes the loader contract. ------------------- */
 const host = await import(pathToFileURL(join(root, 'lib/index.js')).href)
 check('host bundle exports name/apply/Config', () => {
-  assert.equal(host.name, 'dsh-pet-bridge')
+  assert.equal(host.name, 'dsh-pet-seen')
   assert.equal(typeof host.apply, 'function')
   assert.ok(host.Config !== undefined, 'Config schema is exported')
   assert.equal(typeof host.NoticeStore, 'function', 'pure logic is reachable too')
@@ -106,7 +106,7 @@ check('host bundle externalizes only node builtins + schemastery', () => {
 const clientSource = read('client/client.js')
 check('client bundle is a ModuleLoader factory with no runtime imports', () => {
   assert.equal(clientSource.includes('window.__ModuleLoader__.load'), true)
-  assert.equal(clientSource.includes('id: "dsh-pet-bridge"'), true)
+  assert.equal(clientSource.includes('id: "dsh-pet-seen"'), true)
   assert.equal(clientSource.includes('factory: (require) =>'), true)
   // No static imports and no require() calls: this half renders no UI, so it
   // needs no externals at all.
@@ -119,14 +119,14 @@ check('client bundle is a ModuleLoader factory with no runtime imports', () => {
 check('cordis.patch.yml inserts the documented loader entry', () => {
   const patch = read('cordis.patch.yml')
   assert.equal(patch.includes('- insert:'), true)
-  assert.equal(patch.includes('id: dsh-pet-bridge'), true)
-  assert.equal(patch.includes('name: dsh-pet-bridge'), true)
+  assert.equal(patch.includes('id: dsh-pet-seen'), true)
+  assert.equal(patch.includes('name: dsh-pet-seen'), true)
 })
 
 /* 5. Manifest wiring. ---------------------------------------------------- */
 check('package.json wires the bundle and client entries', () => {
   const manifest = JSON.parse(read('package.json'))
-  assert.equal(manifest.name, 'dsh-pet-bridge')
+  assert.equal(manifest.name, 'dsh-pet-seen')
   assert.equal(manifest.dsh.bundle.patch, './cordis.patch.yml')
   assert.equal(manifest.dsh.client.platform, 'web')
   assert.equal(manifest.exports['./client'], './client/client.js')

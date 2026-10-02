@@ -154,7 +154,7 @@ async function startPlugin(
   let agentError: Harness['emitAgentError'] | null = null
   const disposers: Array<() => void | Promise<void>> = []
   const browser = options.browserRoutes === true ? fakeWebServer() : null
-  const scratch = mkdtempSync(join(tmpdir(), 'dsh-pet-bridge-integration-'))
+  const scratch = mkdtempSync(join(tmpdir(), 'dsh-pet-seen-integration-'))
   const tokenFile = join(scratch, 'pet-bridge.json')
   let resolveBound: (bound: { port: number, token: string }) => void = () => {}
   let rejectBound: (error: Error) => void = () => {}

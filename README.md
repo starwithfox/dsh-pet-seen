@@ -1,4 +1,4 @@
-# dsh-pet-bridge
+# dsh-pet-seen
 
 DSH 插件：把 Harness 的任务状态推给本机桌宠，并把"**用户确实看到了这次完成**"
 回传给 Harness，从而做到「看到即取消提示」。
@@ -10,7 +10,7 @@ DSH 插件：把 Harness 的任务状态推给本机桌宠，并把"**用户确�
 > 不随仓库发布；引用它们是为了给出可核对的记录位置，正文结论已在本文写全。
 > **当前状态与下一步：`working-docs/STATUS.md`（唯一入口）**——一眼看清"探到哪了、还差什么、按什么顺序做"。
 > 成熟度评估与安装/分发建议：`working-docs/PLUGIN-MATURITY.md`（平台层"谁有权装"、项目层可分发清单、
-> 运维层共存与生效语义；含一条新增发现：宿主兼容性闸门因未声明 `@deepseek-ai/dsh*` peer 而**空转**）。
+> 运维层共存与生效语义；含发布口径一节）。
 > 过程文档保存在 `working-docs/`，旧轮次记录保存在 `archive/`。
 > 桌面端（Electron 应用）实测：`working-docs/DESKTOP-PROBE-2026-09-30.md`（权威记录）与
 > `working-docs/DESKTOP-COMPAT-FINDINGS.md`（已冻结的历史证据）。要点：桌面应用 boot 的是
@@ -19,15 +19,16 @@ DSH 插件：把 Harness 的任务状态推给本机桌宠，并把"**用户确�
 > 两个宿主会抢控制端口，**同一时刻只跑一个**（该文档 §4）。
 > 桌面容器把页面 origin 改成 `dsh-app://app` 并在转发时剥掉 `Origin`；**实测那条转发是通的**
 > （桌面渲染进程内 `POST /pet-bridge/visibility` 全程 `200`），所以浏览器半边**不是**因容器而失效。
-> **"要真正支持桌面端该怎么做"已实测出结论**：宿主侧全通，但页面侧 L3 在 **0.2.0-rc.2 上必然失效**——
-> 0.2.0 从 `sessions.list` 快照里删掉了 `current`（0.1.5-rc.2 有），客户端因此永远拿不到当前会话，
+> **"要真正支持桌面端该怎么做"已定位到字节级、并且修复已落地**：根因是 0.2.0 从 `sessions.list`
+> 快照里删掉了 `current`（0.1.5-rc.2 有），客户端因此永远拿不到当前会话，
 > **连一次 `GET /pet-bridge/notices` 都不会发**，也就永远不会 `/seen`、永远不撤销桌宠提示。
 > **它不是桌面端独有的问题**：`:19387` 对外提供的那份前端同样没有该字段，普通浏览器打开会一样失效。
 > 见 `working-docs/DESKTOP-PROBE-2026-09-30.md` §3.3、§6.1。
-> **修复设计与双支持决策已出**（仍**未实施**）：`working-docs/FIX-DESIGN-SESSION-CURRENT-2026-09-30.md`
-> ——首选读法改为 `uiSession.adapter.current`（0.1.5/0.2.0 都有且同形，一条路径双支持），
-> 支持范围建议 `"^0.1.5-rc.2 || ^0.2.0-rc.2"`；判据是 `/pet-bridge/notices` 请求次数 > 0 且 `seenAt` 被写入。
-> 因此**在修复落地前`README` 描述的能力在 0.2.0 宿主上不成立**；状态与顺序见 `working-docs/STATUS.md`。
+> **修复已实施并在两个宿主上真机验收**（`working-docs/FIX-DESIGN-SESSION-CURRENT-2026-09-30.md`）：
+> 首选读法改为 `uiSession.adapter.current`（0.1.5 / 0.2.0 都有且同形，一条路径双支持），再加代次复核与订阅；
+> 判据是 `/pet-bridge/notices` 请求次数 > 0 且 `seenAt` 被写入——桌面宿主 `0.2.0-rc.2` 与
+> `web` 宿主 `0.1.5-rc.2`（脚本化 CDP，Gate A 14/14 PASS、`/notices` 直接计数 15 次）**两边都成立**。
+> **支持范围与"没测过的版本"怎么处理，见 §3.0。**
 
 ---
 
@@ -70,7 +71,7 @@ document.visibilityState === 'visible' && document.hasFocus()
 
 ```
 DSH 宿主进程 (node)
-├── dsh-pet-bridge 宿主侧
+├── dsh-pet-seen 宿主侧
 │   ├── 订阅 session/event  → 对话事件流（turn/start, tool/call, turn/end …）
 │   ├── 订阅 agent/status   → 运行生命周期（running ⇄ idle）★ 运行结束信号
 │   ├── 控制服务 127.0.0.1:17323  ← 桌宠的 /hello /state /ack
@@ -113,12 +114,47 @@ Harness 的 HTTP 命名空间。独立控制端口的好处：
 
 ## 3. 安装
 
+### 3.0 支持范围 —— **"放行"不等于"兼容"**
+
+声明的宿主范围写在 `package.json` 的 `peerDependencies`：
+
+```json
+"@deepseek-ai/dsh": "^0.1.5-rc.2 || ^0.2.0-rc.2"
+```
+
+- **只有这两个构建被真机验收过**：`0.1.5-rc.2`（`web` profile：浏览器 UI 与 CLI）与 `0.2.0-rc.2`
+  （DSH 桌面应用 boot 的 `desktop` profile）。两者的判据都成立（见文首横幅）。
+- ⚠️ **这是"放行"，不是"兼容"**：上面的范围会**放行** `0.1.6` / `0.2.0` 这类同系列新版本，
+  但**未实测的版本不保证兼容**。上游一旦改动本插件依赖的内部面（`uiSession` 读法、
+  `turn/end` 的 kind、`webServer` / `sessions` / `agents` 的服务形状），插件可能**静默**失效。
+- **怎么测一个没测过的宿主版本**（判定一律用**宿主状态**，不要只看命令退出码）：
+  1. 取**宿主运行时**的版本——读宿主自己的 `package.json`（桌面端在 `app.asar` 里那份
+     `dsh-app-boot`），**不是** `dsh` CLI 那份；
+  2. 先离线算区间：`semver.satisfies(<运行时版本>, <上面的 peer 范围>, { includePrerelease: true })`
+     （`semver` 随全局 `dsh` 装着，不必 `npm install`）；
+  3. 再真机冒烟：先确认插件**没被禁用**（兼容闸门命中时是 profile 里 `row.disabled = true`
+     加 **stderr 一行**，**不写进 `/state`**），随后 `npm run probe:http` 要 `PASS`、
+     `bridge-state.mjs` 不得出现 `STALE` / `DRIFT` / `OLD` / `MIXED`、`:17323/state` 的
+     `sessions[].reader` 要能读到；
+  4. 万一被拦：`dsh plugin allow-version` 会往 profile 的 `compatibility.json` 写**临时豁免**——
+     **豁免不是验收**，它只让你能继续测。
+- ⚠️ **别把 `pluginVersion` 当成宿主兼容性**：它（`0.1.1`）是**插件自己**的版本，只表"插件换代"；
+  `buildId` 则表"同一版重新构建"。两者都**不**表示某个宿主版本被支持——那件事只由上面的 peer 范围表达。
+
+### 3.1 装进 profile
+
 ```powershell
-# 1. 装进 web profile（本地目录直装，不走 registry）
-#    把 <克隆目录> 换成你自己的路径
+# 主推：软链（Junction）。改源码不需要重装，见 3.2
+dsh plugin add --profile web link:<克隆目录>\dsh-plugin
+
+# 备选：实体拷贝（硬链接镜像）。升级语义与上面不同，见 3.2
 dsh plugin add --profile web file:<克隆目录>\dsh-plugin
 
-# 2. 重启 DSH 才会加载（这一步会中断正在运行的会话）
+# registry 渠道：等 0.1.1 正式发布之后才有意义
+# （在此之前 registry 上是同名占位版本，别拿它当正式包）
+dsh plugin --profile web add dsh-pet-seen
+
+# 装完必须重启 DSH 才会加载宿主半边（这一步会中断正在运行的会话）
 ```
 
 > **克隆后不需要构建**：`lib/index.js`（宿主侧）与 `client/client.js`（浏览器侧）两个产物**已入库**，
@@ -130,22 +166,33 @@ dsh plugin add --profile web file:<克隆目录>\dsh-plugin
 > 产物由 tsdown 生成，**不要手改**。
 
 > `dsh plugin` 只是 pnpm 的一层封装：`add` 不会热加载已运行的宿主。
-> 开发时可用 `dsh plugin add --profile web link:<绝对路径>` 建软链，改完重建 + 重启即可。
+
+### 3.2 升级：`git pull` 之后要做什么
+
+- **`link:` 安装**：源码改了**不需要重装**（运行期直接读工作树）。但两件事必须记住：
+  ① **宿主半边（`lib/index.js`）只有重启宿主才会换**——`link:` 只保证运行期读工作树，**不保证热重载**（实测）；
+  ② **页面半边（`client/client.js`）由宿主自己重建**，不必重装。
+  ⇒ 拿到新源码后：`npm run build` → **重启宿主**。
+- **`file:` 安装是硬链接镜像，不是打包解包**：就地改写会**穿透**进 `node_modules`，**改名/重建会断链并
+  冻住那个文件** ⇒ `git pull` 之后**必须重装**；只跑 `build` 修不好已经断链的那一半。
+  ⚠️ "重装没生效"与"没重装"在旧工具下**形状相同**；现在 `probe:http` 与 `bridge-state.mjs` 会用
+  `buildId` 把这种混合态直接判红。
+- **改了包名或版本号时**（本项目就有一次：`dsh-pet-bridge` → `dsh-pet-seen`）：profile 里的依赖名与
+  `dsh.profile.bundles` 条目名**都会变** ⇒ **必须重装**，并确认新名出现在 `dsh.profile.bundles` 里。
 
 > **另一条路：应用内侧栏 Plugins 页**（产品入口，不必退出宿主）。目标填本目录的**绝对路径**；
 > 装完**必须点「立即启用」**——只装不启用时 profile 的 `dsh.profile.bundles` 里没有它，宿主不会加载
 > （页面原文："直接关闭则让它保持已安装但关闭"；"安装成功不代表模块一定能够激活"）。
-> 它把本地目录记成 **`link:`（Junction 软链）**，与 CLI `file:` 的实体拷贝语义不同：
-> `link:` 下改源码不需要重装（但已加载的 JS 模块世代仍要重启才替换），`file:` 下改源码根本不生效。
+> 它把本地目录记成 **`link:`（Junction 软链）**，与 CLI `file:` 的实体拷贝语义不同。
 > **实测（2026-09-30，桌面应用 `0.2.0-rc.2` / `desktop` profile）：走界面装完免重启即加载**，
 > `:19387/pet-bridge/notices` 由 `404` → `200`、`:17323` 当场归属桌面宿主。
 > 步骤、判定表与证据边界见 `working-docs/DESKTOP-PROBE-2026-09-30.md`。
 
 > **profile 归属（易踩）**：浏览器 UI 与 CLI 用 `web` profile（配套运行时 **0.1.5-rc.2**）；
 > DSH **桌面应用** boot 的是 `desktop` profile（`~/.dsh/profiles/desktop`，配套运行时 **0.2.0-rc.2**），
-> 两者**不共享** `node_modules`，所以上面这条命令只让浏览器端起效。
-> **"往 `desktop` 再装一份是否就够"已实测**：宿主侧够（免重启加载、链路全通），
-> 但页面侧在 0.2.0 上**不够**——见 `working-docs/DESKTOP-PROBE-2026-09-30.md` §3.3、§6.1。
+> 两者**不共享** `node_modules`，所以上面那条命令只让浏览器端起效。
+> **"往 `desktop` 再装一份"要装两半**：宿主侧够了（免重启加载、链路全通），页面侧的失效根因
+> 已在第 1~6 步修掉，判据在两个宿主上分别取得——见 `working-docs/DESKTOP-PROBE-2026-09-30.md` §3.3、§6.1。
 > 另外两个宿主会抢控制端口 `17323`，**同一时刻只跑一个宿主**——共存的半残行为见该文档 §4。
 
 ### 配置
@@ -204,7 +251,13 @@ dsh plugin add --profile web file:<克隆目录>\dsh-plugin
 | `max-tokens` | `completed`（文案另写，不写成正常完成） | 是 |
 | `error` / `blocked` | `error` | 是 |
 | `aborted` / `interrupted` | `idle` | **否** —— 不算完成，不弹 |
-| `unknown`（reason 缺失 / 畸形 / DSH 新增的 kind） | `idle` | **否** —— 不猜成功 |
+| `forked`（0.2.0 新增：分叉时剪断继承前缀里未闭合的回合） | `idle` | **否** —— 父会话没结束、子会话还没跑，不弹 |
+| `unknown`（reason 缺失 / 畸形 / 尚未命名的新 kind） | `idle` | **否** —— 不猜成功 |
+
+**DSH 新增 kind 不会静默落进 `unknown`**：`src/pins.ts` 的 `_ReasonsCovered` 拿宿主声明
+`TurnEndReason['kind']` 去检查 `TurnEndKind`，**漏一个就编译失败**。0.2.0 的 `forked` 正是这样被发现的
+（`npm run compat:0.2.0` 当时报 `src/pins.ts(107,3) TS2344`），所以 `unknown` 现在只兜
+"reason 缺失 / 畸形"这类真正读不懂的输入。
 
 只有 `completed` 与 `error` 能携带 `noticeId`，这两种才叫**结果事件**。
 `error` 兼作运行中的失败上报（`tool/result`、`agent/error`），那时**没有** `noticeId`。
@@ -379,6 +432,22 @@ npm run check           # 以上全部（含产物一致性闸门）
 - `file:` 安装是**硬链接镜像**：就地改写会穿透，改名/重建会断链并**冻住该文件** ⇒ `git pull` 之后
   **必须重装**，只跑 `build` 修不好已断链的那一半。混装的两半会被上面那条判据直接抓出来。
 
+### DOM face 每次判定都重新解析（L3 静默失效的修复）
+
+L3 判定（"这轮的结果确实在屏上"）要靠两个 DOM 节点：`[data-chat-flow]` 与
+`[data-conversation-scroll]`。**harness 在每次会话切换时都会重挂载会话槽**，所以这两个节点会被换成新的。
+
+`createVisibilityDeps()` 因此**在每次读取时重新 `query`**，而不是建一次存起来：
+
+- 存成值会在第一次切换会话后变成**死引用**——`querySelectorAll` 在脱离文档的节点上**仍会返回它当时的孩子**，
+  于是 `flowItems()` 不会走 `document` 回退分支，而所有矩形测量都是 0
+  ⇒ `isTurnVisible()` **恒 false** ⇒ 页面此后**永远不发 `/seen`，且不打任何日志**。
+  现场表现就是"桌宠提示再也不自动消失"，**只有刷新页面才恢复**（2026-10-02 实测到的那次）。
+- 重新解析的代价是每次判定多两次 `querySelector`，换来的是 `VisibilityDeps` 保持普通值形状、
+  **所有消费点与测试夹具都不用改**。
+- 覆盖用例：同一个 fixture 在 `apply()` **之后替换** flow/scroll 节点，`/seen` 仍须上报
+  （`tests/client.test.ts` 与 `tests/visibility.test.ts` 各一条；把 face 改回"只解析一次"两条都会红）。
+
 ### 类型检查对着**活的** DSH
 
 `tsconfig.check.json` 用 `paths` 把 `@deepseek-ai/dsh-session`、`dsh-agent`、
@@ -389,7 +458,35 @@ npm run check           # 以上全部（含产物一致性闸门）
 `dsh-session-projection`，而那个版本不存在）；二是**只有对着宿主真正加载的声明检查，
 编译通过才说明运行时不会炸**。
 
-装到别的机器上时改 `tsconfig.check.json` / `tsconfig.test.json` 里的绝对路径即可。
+#### `npm run compat:0.2.0`：对着**另一个**宿主版本的声明再查一遍
+
+`tsconfig.check.json` 指向的是本机 profile（这里是 **0.1.5-rc.2**），而本插件声明同时支持
+**0.2.0-rc.2**。桌面 `app.asar` 里**一份 `.d.ts` 都没有**（打包器把声明全丢了），所以
+`tsconfig.compat-0.2.0.json` 改成指向 `_scratch/` 下**从 registry 取回、并与 asar 内 `.js`
+逐字节核对过**的声明，并把 `dsh-session` 与 `dsh-agent` **两个**包都换到 0.2.0-rc.2。
+
+⚠️ **它的前置不在版本控制里**（`_scratch/` 被 `.gitignore` 忽略）⇒ **别的机器、或清过
+`_scratch/` 的克隆上，这条命令必然失败**。取回方式：
+
+```powershell
+node _scratch/fetch-dsh-session.mjs        # dsh-session@0.2.0-rc.2 的 lib/**/*.d.ts
+node _scratch/fetch-dsh-agent-0.2.0.mjs    # dsh-agent@0.2.0-rc.2 的 lib/**/*.d.ts
+node _scratch/compare-dsh-agent-asar.mjs   # 与 asar 内的 .js 逐字节核对（期望 11/11 same）
+```
+
+（取回脚本本身也在 `_scratch/` 里，属同一类"本机材料"。它**故意不接进 `npm run check`**：
+一条依赖网络与 gitignored 目标的检查不该成为普通门禁的前置。**判据**：
+
+- 它**绿**只说明"被 pin 的类型面在 0.2.0-rc.2 下能编译"；
+- 它**红**才是重点——`src/pins.ts` 的 `_ReasonsCovered` 会在宿主新增 `turn/end` kind 时直接编译失败
+  （0.2.0 的 `forked` 就是这样被发现的，当时的报错正是 `src/pins.ts(107,3) TS2344`）。
+
+#### 本机绝对路径是已知债（**本轮只成文，不改造**）
+
+`tsconfig.check.json` / `tsconfig.compat-0.2.0.json` / `tsconfig.test.json` 里共有
+**15 处**本机绝对路径（6 + 4 + 4 + 1 处示例），指向这台机器的 DSH 安装位置。
+装到别的机器上就得改它们；**结构性改造（环境变量/相对解析）留给 P1-E 专项**
+（`working-docs/PRIORITIES-2026-09-30.md` §3），本轮不动。
 
 ### 测试怎么跑
 
@@ -445,6 +542,7 @@ type _SessionPinned = Assert<Satisfies<import('@deepseek-ai/dsh-session').Sessio
 dsh-plugin/
 ├── package.json          # dsh.bundle.patch + dsh.client.{platform,inject}
 ├── cordis.patch.yml      # 把插件挂进 profile loader 树 + 默认配置
+├── LICENSE               # MIT，署名 starwithfox（随包发布）
 ├── tsdown.config.ts      # 宿主 ESM bundle + 浏览器 CJS 工厂 bundle
 ├── tsconfig.check.json   # 对着活的 DSH 类型检查
 ├── tsconfig.client.json  # DOM 侧
@@ -486,3 +584,15 @@ dsh-plugin/
     │                     # 真机 CDP 验收驱动（`npm run acceptance`）
     └── smoke-bundle.mjs  # 产物门禁
 ```
+
+---
+
+## 7. 许可与范围
+
+- **本包（`dsh-pet-seen`）是 MIT，著作权归 `starwithfox`**：正文见同目录 `LICENSE`，
+  且随包发布（`files` 里含 `LICENSE`，`npm pack` 会带你核到）。
+- **范围声明**：本包**只含 DSH 插件侧**的代码与产物（`lib/`、`client/`、`cordis.patch.yml`、
+  本文与 `LICENSE`）。**桌宠接收端（Python：`pet.py` / `pet_bridge.py` 等）不在本包内**，
+  它的著作权不属于本插件作者，也不随本包分发。
+- ⚠️ 仓库根目录另有一份 `LICENSE`，**署的是桌宠侧原作者**；两者不是同一份授权，**别互相顶替**。
+- `working-docs/` 与 `archive/` 是开发者的本地过程记录，**不随包发布**。

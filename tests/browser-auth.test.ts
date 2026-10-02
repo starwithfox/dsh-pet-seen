@@ -29,12 +29,12 @@ assert.equal(typeof resolvePetClientUrl, 'function', 'browser-auth.mjs must expo
 const resolve = resolvePetClientUrl as ResolvePetClientUrl
 
 /** The boot JSON roster entry, verbatim from the 0.2.0-rc.2 desktop shell. */
-const BOOT_ENTRY = '{"id":"dsh-pet-bridge","url":"plugins/??dsh-pet-bridge/client.js&rev=cc6e904cfa63","rev":"cc6e904cfa63","inject":[]}'
-const BOOT_URL = 'plugins/??dsh-pet-bridge/client.js&rev=cc6e904cfa63'
+const BOOT_ENTRY = '{"id":"dsh-pet-seen","url":"plugins/??dsh-pet-seen/client.js&rev=cc6e904cfa63","rev":"cc6e904cfa63","inject":[]}'
+const BOOT_URL = 'plugins/??dsh-pet-seen/client.js&rev=cc6e904cfa63'
 
 /** The shared `<script src>` group, verbatim minus the 56 unrelated packages. */
-const SCANNED_GROUP = 'plugins/??@deepseek-ai/dsh-session-log-export/client.js,@deepseek-ai/dsh-api-session-controller/client.js,dsh-pet-bridge/client.js&amp;rev=746d7e975124'
-const DECODED_GROUP = 'plugins/??@deepseek-ai/dsh-session-log-export/client.js,@deepseek-ai/dsh-api-session-controller/client.js,dsh-pet-bridge/client.js&rev=746d7e975124'
+const SCANNED_GROUP = 'plugins/??@deepseek-ai/dsh-session-log-export/client.js,@deepseek-ai/dsh-api-session-controller/client.js,dsh-pet-seen/client.js&amp;rev=746d7e975124'
+const DECODED_GROUP = 'plugins/??@deepseek-ai/dsh-session-log-export/client.js,@deepseek-ai/dsh-api-session-controller/client.js,dsh-pet-seen/client.js&rev=746d7e975124'
 
 describe('resolvePetClientUrl (tools/browser-auth.mjs)', () => {
   it('prefers the standalone boot JSON entry over the shared script group', () => {
@@ -56,12 +56,12 @@ describe('resolvePetClientUrl (tools/browser-auth.mjs)', () => {
   })
 
   it('still finds a single-package script group when the boot JSON is absent', () => {
-    const url = 'plugins/??dsh-pet-bridge/client.js&rev=abc123'
+    const url = 'plugins/??dsh-pet-seen/client.js&rev=abc123'
     assert.equal(resolve(`<script src="${url}"></script>`, [url]), url)
   })
 
   it('tolerates a leading slash, which older shells carry', () => {
-    const url = '/plugins/??dsh-pet-bridge/client.js&rev=abc123'
+    const url = '/plugins/??dsh-pet-seen/client.js&rev=abc123'
     assert.equal(resolve(`<script src="${url}"></script>`, [url]), url)
   })
 
@@ -72,7 +72,7 @@ describe('resolvePetClientUrl (tools/browser-auth.mjs)', () => {
   })
 
   it('is not fooled by the plugin name appearing in an unrelated roster', () => {
-    const trailing = '{"ids":["dsh-pet-bridge"]}'
+    const trailing = '{"ids":["dsh-pet-seen"]}'
     assert.equal(resolve(`<script>${trailing}</script>`, []), undefined)
   })
 })

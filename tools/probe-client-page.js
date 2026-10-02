@@ -1,5 +1,5 @@
 /**
- * Browser-side probe for the running `dsh-pet-bridge` client half.
+ * Browser-side probe for the running `dsh-pet-seen` client half.
  *
  * HOW TO USE
  *   1. Open the DSH page, press F12, switch to the Console tab.
@@ -143,7 +143,7 @@
   log('================ environment ================')
   log('url         ', location.href)
   log('visibility  ', document.visibilityState, '| hasFocus', document.hasFocus())
-  log('tab-id      ', sessionStorage.getItem('dsh-pet-bridge:tab-id')
+  log('tab-id      ', sessionStorage.getItem('dsh-pet-seen:tab-id')
     ?? '(absent -> the client half never ran in this tab)')
   log('activeRoots ', document.querySelectorAll(ACTIVE_SELECTOR).length,
     '| flow', flow !== null, '| scroll', scroll !== null)

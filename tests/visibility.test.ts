@@ -15,13 +15,14 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import {
   VisibilityTracker,
+  createVisibilityDeps,
   flowItems,
   isTurnVisible,
   kindOf,
   turnNumberOf,
   turnResultBox,
 } from '../src/client/visibility.js'
-import { FixtureDocument, item, notice } from './client-fixture.js'
+import { DEFAULT_VIEWPORT_HEIGHT, FixtureDocument, item, notice } from './client-fixture.js'
 
 /** A fresh page showing a 1200 px viewport. */
 function makeScene(): FixtureDocument {
@@ -180,6 +181,53 @@ describe('D1: which element stands for the result', () => {
 
     scene.setItems([item(1, 'assistant-step', { top: 500, bottom: 3_000 })])
     assert.equal(isTurnVisible(scene.deps(), 1), true)
+  })
+})
+
+describe('a remounted conversation slot: L3 must survive a session switch', () => {
+  /**
+   * Install a minimal `window` for one case.
+   *
+   * `createVisibilityDeps()` reads the viewport from the global, unlike the
+   * hand-built `deps()` the other cases use, so a case that goes through the
+   * shipping face builder has to provide one.
+   *
+   * @param height - viewport height in px.
+   * @param run - the case body.
+   * @returns whatever `run` returns.
+   */
+  function withWindow<T>(height: number, run: () => T): T {
+    const previous = (globalThis as Record<string, unknown>).window
+    ;(globalThis as Record<string, unknown>).window = { innerHeight: height, scrollY: 0 }
+    try {
+      return run()
+    } finally {
+      if (previous === undefined) delete (globalThis as Record<string, unknown>).window
+      else (globalThis as Record<string, unknown>).window = previous
+    }
+  }
+
+  it('follows the document to the new flow and scroller', () => {
+    withWindow(DEFAULT_VIEWPORT_HEIGHT, () => {
+      const scene = makeScene()
+      scene.setItems([item(3, 'assistant-step', { top: 200, bottom: 4_000 })])
+      // The shipping face builder, over the page exactly as the browser half
+      // sees it: `src/client/index.ts` calls `createVisibilityDeps()` once and
+      // reuses the result for the life of the page.
+      const deps = createVisibilityDeps(scene.asDocument())
+      assert.equal(isTurnVisible(deps, 3), true)
+
+      scene.remount([item(3, 'assistant-step', { top: 200, bottom: 4_000 })])
+
+      // Same `deps` object, new subtree. A face frozen at construction keeps
+      // measuring the detached pair, where every rectangle is 0: `visibleBand`
+      // collapses to zero height and `isTurnVisible` is false for good, so the
+      // page never posts `/seen` again and logs nothing. That is the 2026-10-02
+      // field defect; this assertion is what must go red if the face is ever
+      // captured once more.
+      assert.equal(flowItems(deps).length, 1)
+      assert.equal(isTurnVisible(deps, 3), true)
+    })
   })
 })
 

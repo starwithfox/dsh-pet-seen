@@ -63,7 +63,7 @@ describe('control credential publishing', () => {
   })
 
   it('writes an explicit path and leaves the shared file untouched', () => {
-    const scratch = mkdtempSync(join(tmpdir(), 'dsh-pet-bridge-credentials-'))
+    const scratch = mkdtempSync(join(tmpdir(), 'dsh-pet-seen-credentials-'))
     const custom = join(scratch, 'pet-bridge.json')
     const sharedBefore = statOrNull(tokenFilePath())
     try {
@@ -95,7 +95,7 @@ describe('control credential publishing', () => {
   })
 
   it('publishes to the explicit path when an ephemeral port does opt in', async () => {
-    const scratch = mkdtempSync(join(tmpdir(), 'dsh-pet-bridge-credentials-'))
+    const scratch = mkdtempSync(join(tmpdir(), 'dsh-pet-seen-credentials-'))
     const custom = join(scratch, 'pet-bridge.json')
     const sharedBefore = statOrNull(tokenFilePath())
     const result = await startControlServer({ port: 0, tokenFile: custom, ...idleDeps })

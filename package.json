@@ -1,6 +1,6 @@
 {
-  "name": "dsh-pet-bridge",
-  "version": "0.1.0",
+  "name": "dsh-pet-seen",
+  "version": "0.1.1",
   "description": "Bridge between DeepSeek Harness and a local desktop pet: session event push, per-session progress buckets, and 'user has actually seen it' notice acknowledgement.",
   "keywords": [
     "deepseek",
@@ -15,7 +15,7 @@
   ],
   "type": "module",
   "license": "MIT",
-  "private": true,
+  "author": "starwithfox",
   "main": "lib/index.js",
   "exports": {
     ".": "./lib/index.js",
@@ -27,8 +27,12 @@
     "lib",
     "client",
     "cordis.patch.yml",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org/"
+  },
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
@@ -58,7 +62,8 @@
     "mock-pet": "node tools/mock-pet.mjs"
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": "^4.0.2"
+    "@deepseek-ai/cordis": "^4.0.2",
+    "@deepseek-ai/dsh": "^0.1.5-rc.2 || ^0.2.0-rc.2"
   },
   "peerDependenciesMeta": {
     "@deepseek-ai/cordis": {

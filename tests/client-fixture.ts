@@ -96,8 +96,16 @@ function matchSelector(selector: string): SelectorMatcher {
 
 /** A fake document holding the conversation flow and its scroll container. */
 export class FixtureDocument {
-  readonly flow: FixtureElement
-  readonly scroll: FixtureElement
+  /**
+   * The conversation flow container.
+   *
+   * Not `readonly`: {@link FixtureDocument.remount} swaps in fresh nodes the way
+   * the harness does on a session switch. That swap is the only way to tell a
+   * face that follows the document from one frozen at construction time.
+   */
+  flow: FixtureElement
+  /** The flow's scroll container. See {@link FixtureDocument.flow}. */
+  scroll: FixtureElement
   /** Mutation-observation root; never confused with a flow item. */
   readonly documentElement: FixtureElement
   viewportHeight = DEFAULT_VIEWPORT_HEIGHT
@@ -119,6 +127,27 @@ export class FixtureDocument {
    * @param items - the items, in document order.
    */
   setItems(items: FixtureElement[]): void {
+    this.flow.setItems(items)
+  }
+
+  /**
+   * Replace the conversation subtree, as the harness does when the session
+   * switches: the old flow/scroll nodes survive in the page's object graph but
+   * are detached, and the fresh pair carries the rows.
+   *
+   * The detached pair is deliberately left holding **nothing** and measuring
+   * **zero**, which is what makes the defect visible: a DOM face captured once
+   * keeps reading the dead pair, so every rectangle it measures is 0 and no turn
+   * can ever be on screen again.
+   *
+   * @param items - what the new flow renders, in document order.
+   */
+  remount(items: FixtureElement[] = []): void {
+    this.flow.setItems([])
+    this.flow.setRect({ top: 0, bottom: 0, width: 0, height: 0 })
+    this.scroll.setRect({ top: 0, bottom: 0, width: 0, height: 0 })
+    this.flow = new FixtureElement({ 'data-chat-flow': '' })
+    this.scroll = new FixtureElement({ 'data-conversation-scroll': '' }, { top: 76, bottom: 1_279 })
     this.flow.setItems(items)
   }
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Autonomous browser acceptance for `dsh-pet-bridge`.
+ * Autonomous browser acceptance for `dsh-pet-seen`.
  *
  * Drives a **headless Chrome over CDP** so the page-side acceptance in
  * `tools/acceptance-client-page.js` can run without a human pasting anything
@@ -472,7 +472,7 @@ async function describePage(cdp) {
         assistantStep: document.querySelectorAll('[data-chat-flow-kind="assistant-step"]').length,
         bodyChildren: document.body === null ? 0 : document.body.children.length,
       },
-      tabId: sessionStorage.getItem('dsh-pet-bridge:tab-id'),
+      tabId: sessionStorage.getItem('dsh-pet-seen:tab-id'),
       sessionStorageKeys: Object.keys(sessionStorage),
       bodyText: (document.body === null ? '' : document.body.innerText).slice(0, 800),
     })`)
@@ -504,7 +504,7 @@ async function waitForPageReady(cdp, timeoutMs) {
     try {
       const state = await evaluate(cdp, `JSON.stringify({
         flow: document.querySelector('[data-chat-flow]') !== null,
-        tab: sessionStorage.getItem('dsh-pet-bridge:tab-id'),
+        tab: sessionStorage.getItem('dsh-pet-seen:tab-id'),
         turns: document.querySelectorAll('[data-chat-turn]').length,
         ready: document.readyState,
         body: document.body === null ? '' : document.body.innerText.slice(0, 120),
@@ -963,7 +963,7 @@ async function runGateC(context) {
       }
       sessionB = await probeSession(cdpB)
     }
-    const tabBId = await evaluate(cdpB, `sessionStorage.getItem('dsh-pet-bridge:tab-id')`)
+    const tabBId = await evaluate(cdpB, `sessionStorage.getItem('dsh-pet-seen:tab-id')`)
     record('DRIVER-two-tabs',
       sessionB === otherSession && typeof tabBId === 'string' && tabBId !== tabAId ? 'PASS' : 'FAIL',
       `tab A ${String(tabAId)} on ${expectedSession}; tab B ${String(tabBId)} on ${String(sessionB)} (wanted ${otherSession})`)
@@ -1745,7 +1745,7 @@ async function main() {
     const focused = await evaluate(cdp, `JSON.stringify({ hasFocus: document.hasFocus(), visibility: document.visibilityState })`)
     log(`focus emulation on: ${focused}`)
 
-    const ourTabId = await evaluate(cdp, `sessionStorage.getItem('dsh-pet-bridge:tab-id')`)
+    const ourTabId = await evaluate(cdp, `sessionStorage.getItem('dsh-pet-seen:tab-id')`)
 
     const clientSession = await probeSession(cdp)
     log(`the tab is on session ${String(clientSession)}`)

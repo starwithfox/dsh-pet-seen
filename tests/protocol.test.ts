@@ -160,6 +160,7 @@ describe('settled-run event mapping', () => {
     'blocked',
     'aborted',
     'interrupted',
+    'forked',
     'unknown',
   ] as const
 
@@ -175,7 +176,10 @@ describe('settled-run event mapping', () => {
   })
 
   it('never announces a non-completion as a result', () => {
-    for (const kind of ['aborted', 'interrupted', 'unknown'] as const) {
+    // `forked` is in here on purpose: a fork cuts an unclosed turn of the
+    // inherited prefix, so it is not the user's run finishing. Mapping it to
+    // `completed` would pop "your task finished" for work nobody did.
+    for (const kind of ['aborted', 'interrupted', 'forked', 'unknown'] as const) {
       const dispatch = completionDispatch(kind)
       assert.equal(dispatch.notice, false, `${kind} must not mint a notice`)
       assert.equal(dispatch.event, 'idle', `${kind} must not be announced as a result`)

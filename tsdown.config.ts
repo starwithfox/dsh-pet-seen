@@ -62,7 +62,7 @@ export default defineConfig([
     define: buildIdentity,
     deps: { neverBundle: [] },
     outputOptions: {
-      banner: 'window.__ModuleLoader__.load({ id: "dsh-pet-bridge", factory: (require) => {',
+      banner: 'window.__ModuleLoader__.load({ id: "dsh-pet-seen", factory: (require) => {',
       footer: 'return module.exports; } });',
       intro: 'var module = { exports: {} }; var exports = module.exports;',
     },

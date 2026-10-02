@@ -479,7 +479,7 @@
       href: location.href,
       visible: document.visibilityState,
       focused: document.hasFocus(),
-      tabId: sessionStorage.getItem('dsh-pet-bridge:tab-id'),
+      tabId: sessionStorage.getItem('dsh-pet-seen:tab-id'),
       scrollTop: scroll === null || scroll === undefined ? null : Math.round(scroll.scrollTop),
       maxScrollTop: px(maxScrollTop()),
       bandHeight: px(Math.max(0, visible.bottom - visible.top)),

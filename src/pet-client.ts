@@ -15,7 +15,7 @@
  * - **Nothing is buffered while the pet is away.** The queue holds at most the
  *   in-flight request; a backlog of stale "running" frames is worse than none.
  *
- * @module dsh-pet-bridge/pet-client
+ * @module dsh-pet-seen/pet-client
  */
 
 import { request as httpRequest } from 'node:http'

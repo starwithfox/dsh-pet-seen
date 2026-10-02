@@ -22,7 +22,7 @@
  * `/state`: `pet_bridge.snapshot_status()` reads `sessions` and `revision` and
  * ignores every other key, so {@link StatePayload.buildId} is additive too.
  *
- * @module dsh-pet-bridge/protocol
+ * @module dsh-pet-seen/protocol
  */
 
 /** Protocol revision carried by every event, control response, and handshake. */
@@ -129,6 +129,13 @@ export type PetEventName =
  * Turn-end reason kinds the notification state machine distinguishes. Mirrors
  * `TurnEndReasonMap` from `@deepseek-ai/dsh-session` without importing it.
  *
+ * `'forked'` (added by DSH 0.2.0) is the synthesized ending of an **unclosed
+ * turn in a forked session's inherited prefix**: nothing finished, the parent
+ * is still running and the child has not started, so it maps to `idle` and
+ * mints no notice — exactly like `aborted` / `interrupted`, and deliberately
+ * *not* like `completed`. The `_ReasonsCovered` pin in `src/pins.ts` is what
+ * forced this kind to be named instead of silently degrading to `'unknown'`.
+ *
  * `'unknown'` is deliberately *not* one of the harness kinds: it is what a
  * missing, malformed or not-yet-named reason degrades to, and it must never be
  * treated as a successful completion.
@@ -138,6 +145,7 @@ export type TurnEndKind =
   | 'aborted'
   | 'blocked'
   | 'error'
+  | 'forked'
   | 'max-tokens'
   | 'interrupted'
   | 'unknown'

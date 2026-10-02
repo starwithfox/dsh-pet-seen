@@ -1,5 +1,5 @@
 /**
- * In-page acceptance runner for the browser half of `dsh-pet-bridge`.
+ * In-page acceptance runner for the browser half of `dsh-pet-seen`.
  *
  * This is the active counterpart to `probe-client-page.js`. The probe only
  * *reports* geometry; this runner **drives** the page and then judges the
@@ -724,7 +724,7 @@
   log('runner     ', RUNNER_VERSION)
   log('url        ', location.href)
   log('visibility ', document.visibilityState, '| hasFocus', document.hasFocus())
-  log('tab-id     ', sessionStorage.getItem('dsh-pet-bridge:tab-id')
+  log('tab-id     ', sessionStorage.getItem('dsh-pet-seen:tab-id')
     ?? '(absent -> the client half never ran in this tab; hard-refresh and re-paste)')
   log('activeRoots', document.querySelectorAll(ACTIVE_SELECTOR).length,
     '| flow', flow !== null, '| scroll', scroll !== null)

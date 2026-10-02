@@ -1,5 +1,5 @@
 /**
- * Browser half of `dsh-pet-bridge`.
+ * Browser half of `dsh-pet-seen`.
  *
  * This half is intentionally tiny and **dependency-free**: it renders no UI, so
  * it never touches `react` or the frozen module table, and its bundle is
@@ -29,7 +29,7 @@
  *
  * Every decision it makes is in `decide.ts`; this file is only the wiring.
  *
- * @module dsh-pet-bridge/client
+ * @module dsh-pet-seen/client
  */
 
 import { BROWSER_ROUTES, BUILD_ID, PROTOCOL_VERSION } from '../protocol.js'
@@ -117,7 +117,7 @@ const DEFAULT_SEEN_DWELL_MS = 1_500
 export const SEEN_RETRY_COOLDOWN_MS = 2_000
 
 /** Per-tab-instance id key; survives reloads of the same tab. */
-const TAB_ID_KEY = 'dsh-pet-bridge:tab-id'
+const TAB_ID_KEY = 'dsh-pet-seen:tab-id'
 
 /**
  * Ask a timer not to hold the process open.
@@ -193,7 +193,7 @@ async function postJson(path: string, body: unknown): Promise<Record<string, unk
  * @param ctx - browser plugin context.
  */
 export function apply(ctx: ClientContext): void {
-  const log = (message: string): void => { ctx.logger?.info?.(`dsh-pet-bridge: ${message}`) }
+  const log = (message: string): void => { ctx.logger?.info?.(`dsh-pet-seen: ${message}`) }
   const id = tabId()
   /**
    * Notice ids this page has settled or been terminally refused for.

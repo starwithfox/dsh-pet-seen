@@ -19,7 +19,7 @@
  * time and returns the effects to apply. It starts no timers and reads no
  * clock, which is what makes the awkward orderings in point 2 testable.
  *
- * @module dsh-pet-bridge/state
+ * @module dsh-pet-seen/state
  */
 
 import type {

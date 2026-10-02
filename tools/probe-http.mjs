@@ -289,9 +289,9 @@ if (STATE_JSON === undefined) {
   const clientPath = resolvePetClientUrl(html, referenced)
   if (clientPath === undefined) {
     failures += 1
-    console.log('  !! dsh-pet-bridge is not in the boot payload: the plugin is not loaded for this profile')
+    console.log('  !! dsh-pet-seen is not in the boot payload: the plugin is not loaded for this profile')
   } else {
-    const result = await fetchPath(`dsh-pet-bridge/client.js (${clientPath})`, clientPath, { headers: { cookie } })
+    const result = await fetchPath(`dsh-pet-seen/client.js (${clientPath})`, clientPath, { headers: { cookie } })
     if (!result.ok) failures += 1
   }
 }

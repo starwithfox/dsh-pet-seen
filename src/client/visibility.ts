@@ -36,7 +36,7 @@
  * placeholders, and it degrades to "the one item that exists" when a turn
  * renders a single row.
  *
- * @module dsh-pet-bridge/client/visibility
+ * @module dsh-pet-seen/client/visibility
  */
 
 /** Outcome of one visibility evaluation. */
@@ -216,6 +216,19 @@ export function turnItems(deps: VisibilityDeps, turn: number): ElementLike[] {
 /**
  * Build the DOM face from the real document.
  *
+ * `flowElement` / `scrollElement` are **resolved on every read**, never captured
+ * once. The harness remounts the conversation slot whenever the session
+ * changes, and a face frozen at construction goes stale at the first switch:
+ * `querySelectorAll` on the detached flow still returns the children it was
+ * holding, so {@link flowItems} never reaches its `document` fallback, and every
+ * rectangle measured on the dead nodes is 0 — which leaves {@link isTurnVisible}
+ * permanently false and stops `/seen` for the life of the page, with nothing
+ * logged (found in the field on 2026-10-02; see
+ * `working-docs/INVESTIGATION-SEEN-NOT-FIRING-2026-10-02.md` §5.1).
+ *
+ * Re-reading the two nodes per evaluation costs two `querySelector` calls and
+ * keeps {@link VisibilityDeps} a plain value shape, so no consumer changes.
+ *
  * @param root - document to read; defaults to the page's own.
  * @returns a {@link VisibilityDeps} bound to that root.
  */
@@ -231,8 +244,12 @@ export function createVisibilityDeps(root?: Document): VisibilityDeps {
   }
   return {
     document: (doc as unknown as QueryScope | undefined) ?? null,
-    flowElement: asScope(doc === undefined ? null : query(FLOW_SELECTOR)),
-    scrollElement: asScope(doc === undefined ? null : query(SCROLL_SELECTOR) ?? query(FLOW_SELECTOR)),
+    get flowElement() {
+      return asScope(doc === undefined ? null : query(FLOW_SELECTOR))
+    },
+    get scrollElement() {
+      return asScope(doc === undefined ? null : query(SCROLL_SELECTOR) ?? query(FLOW_SELECTOR))
+    },
     viewportHeight: () => (typeof window === 'undefined' ? 0 : window.innerHeight),
     rectOf: element => element.getBoundingClientRect(),
   }

@@ -9,33 +9,43 @@
  * The desktop installation cannot be used directly: `app.asar` ships no
  * declarations at all (the packer drops every `.d.ts`). The declarations come
  * from the registry instead — see `working-docs/DECISION-FORKED-2026-09-30.md`
- * §2.3 — and the copies in `_scratch/dsh-session-0.2.0-rc.2/` were verified
- * byte-identical to the `app.asar` copies of `lib/index.js`,
- * `lib/types/fork.js`, `lib/types/repair.js`, `lib/types/types.js` and
- * `lib/types/index.js`.
+ * §2.3 — and the copies under `_scratch/` were verified **byte-identical** to
+ * the `app.asar` copies:
  *
- * To repopulate the target after `_scratch/` is cleared (needs network; the
+ *   - `_scratch/dsh-session-0.2.0-rc.2/` — 5/5 of `lib/index.js`,
+ *     `lib/types/{fork,repair,types,index}.js`
+ *   - `_scratch/dsh-agent-0.2.0-rc.2/` — 11/11 of `lib/**\/*.js`
+ *     (step 7 / T6; script `_scratch/compare-dsh-agent-asar.mjs`)
+ *
+ * To repopulate the targets after `_scratch/` is cleared (needs network; the
  * machine's schannel is broken, so the fetch goes through node/OpenSSL):
  *
  *     node _scratch/fetch-dsh-session.mjs
+ *     node _scratch/fetch-dsh-agent-0.2.0.mjs
  *
- * Only `@deepseek-ai/dsh-session` is retargeted. The other five harness
- * packages keep the live-profile mapping, because a *different version* of
- * them is out of scope here: this config exists to catch turn-end reason drift,
- * not to seed a second, ignored installation.
+ * **Both** `@deepseek-ai/dsh-session` and `@deepseek-ai/dsh-agent` are
+ * retargeted, because `src/pins.ts` pins a face from each and the live profile
+ * only supplies the 0.1.5 shape for both. The other three harness packages keep
+ * the live-profile mapping: `dsh-host-webserver` and `dsh-client-connection`
+ * are reached through the page, not through these pins.
+ *
+ * ⚠️ **What a green run does and does not mean**: it says the pinned type
+ * surfaces type-check against both 0.2.0-rc.2 packages. It is *not* a runtime
+ * verification and it does not cover harness packages that are not pinned.
  *
  * NOTE: like `tsconfig.check.json`, this file hard-codes this machine's profile
- * path (5 occurrences). P1-E's portability work
- * (`working-docs/PRIORITIES-2026-09-30.md` §3) has to cover it as well; the
- * prefix is on the five `@deepseek-ai/*` lines below.
+ * path (4 occurrences, on the `@deepseek-ai/*` lines below). P1-E's portability
+ * work (`working-docs/PRIORITIES-2026-09-30.md` §3) has to cover it as well.
  *
- * Expected result is deliberately red until `forked` is implemented:
+ * Expected result is **green** since step 7 implemented the `forked` kind. It
+ * was deliberately red before that, with exactly this line:
  *
  *     src/pins.ts(107,3): error TS2344: Type 'boolean' does not satisfy the constraint 'true'.
  *
- * That error IS the point: `_ReasonsCovered` refuses to let a new harness kind
- * degrade to a runtime default. It is not wired into `npm run check` yet —
- * see DECISION-FORKED §9 for why.
+ * That error WAS the point: `_reasonsCovered` refuses to let a new harness kind
+ * degrade to a runtime default. It is still not wired into `npm run check` —
+ * see DECISION-FORKED §9 for why (the target lives in a gitignored `_scratch/`,
+ * so it cannot be a precondition of the ordinary gate).
  */
 {
   "extends": "./tsconfig.check.json",
@@ -45,7 +55,7 @@
       "@deepseek-ai/cordis": ["C:/Users/star_fox/.dsh/profiles/node_modules/@deepseek-ai/cordis/lib/types/index.d.ts"],
       "@deepseek-ai/schemastery": ["C:/Users/star_fox/.dsh/profiles/node_modules/@deepseek-ai/schemastery/lib/types/index.d.ts"],
       "@deepseek-ai/dsh-session": ["../_scratch/dsh-session-0.2.0-rc.2/lib/types/index.d.ts"],
-      "@deepseek-ai/dsh-agent": ["C:/Users/star_fox/.dsh/profiles/node_modules/@deepseek-ai/dsh-agent/lib/types/index.d.ts"],
+      "@deepseek-ai/dsh-agent": ["../_scratch/dsh-agent-0.2.0-rc.2/lib/types/index.d.ts"],
       "@deepseek-ai/dsh-host-webserver": ["C:/Users/star_fox/.dsh/profiles/node_modules/@deepseek-ai/dsh-host-webserver/lib/types/index.d.ts"],
       "@deepseek-ai/dsh-client-connection": ["C:/Users/star_fox/.dsh/profiles/node_modules/@deepseek-ai/dsh-client-connection/lib/types/index.d.ts"]
     }

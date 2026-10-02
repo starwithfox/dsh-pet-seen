@@ -37,7 +37,7 @@ const root = dirname(dirname(fileURLToPath(import.meta.url)))
 const { apply, PROTOCOL_VERSION } = await import(pathToFileURL(join(root, 'lib/index.js')).href)
 
 /** Private credential path for this run; never the shared user path. */
-const scratch = mkdtempSync(join(tmpdir(), 'dsh-pet-bridge-roundtrip-'))
+const scratch = mkdtempSync(join(tmpdir(), 'dsh-pet-seen-roundtrip-'))
 
 /** Everything the plugin pushes at the pet. */
 const received = []

@@ -1,5 +1,5 @@
 window.__ModuleLoader__.load({
-	id: "dsh-pet-bridge",
+	id: "dsh-pet-seen",
 	factory: (require) => {
 		var module = { exports: {} };
 		var exports = module.exports;
@@ -16,7 +16,7 @@ window.__ModuleLoader__.load({
 		* ("host new, page old", or the reverse) stops being silent. See
 		* `HANDOVER-STEP5.1` §6 and `IMPL-LOG` step 6.1.
 		*/
-		const BUILD_ID = "557e5b64dbdc3f00";
+		const BUILD_ID = "6cb256fab556cb91";
 		/**
 		* Browser-facing route paths. Each is registered as its own `exact` route so a
 		* method mismatch is answered per path instead of falling through to a shared
@@ -476,6 +476,19 @@ window.__ModuleLoader__.load({
 		/**
 		* Build the DOM face from the real document.
 		*
+		* `flowElement` / `scrollElement` are **resolved on every read**, never captured
+		* once. The harness remounts the conversation slot whenever the session
+		* changes, and a face frozen at construction goes stale at the first switch:
+		* `querySelectorAll` on the detached flow still returns the children it was
+		* holding, so {@link flowItems} never reaches its `document` fallback, and every
+		* rectangle measured on the dead nodes is 0 — which leaves {@link isTurnVisible}
+		* permanently false and stops `/seen` for the life of the page, with nothing
+		* logged (found in the field on 2026-10-02; see
+		* `working-docs/INVESTIGATION-SEEN-NOT-FIRING-2026-10-02.md` §5.1).
+		*
+		* Re-reading the two nodes per evaluation costs two `querySelector` calls and
+		* keeps {@link VisibilityDeps} a plain value shape, so no consumer changes.
+		*
 		* @param root - document to read; defaults to the page's own.
 		* @returns a {@link VisibilityDeps} bound to that root.
 		*/
@@ -488,8 +501,12 @@ window.__ModuleLoader__.load({
 			};
 			return {
 				document: doc ?? null,
-				flowElement: asScope(doc === void 0 ? null : query(FLOW_SELECTOR)),
-				scrollElement: asScope(doc === void 0 ? null : query("[data-conversation-scroll]") ?? query("[data-chat-flow]")),
+				get flowElement() {
+					return asScope(doc === void 0 ? null : query(FLOW_SELECTOR));
+				},
+				get scrollElement() {
+					return asScope(doc === void 0 ? null : query("[data-conversation-scroll]") ?? query("[data-chat-flow]"));
+				},
 				viewportHeight: () => typeof window === "undefined" ? 0 : window.innerHeight,
 				rectOf: (element) => element.getBoundingClientRect()
 			};
@@ -803,7 +820,7 @@ window.__ModuleLoader__.load({
 		//#endregion
 		//#region src/client/index.ts
 		/**
-		* Browser half of `dsh-pet-bridge`.
+		* Browser half of `dsh-pet-seen`.
 		*
 		* This half is intentionally tiny and **dependency-free**: it renders no UI, so
 		* it never touches `react` or the frozen module table, and its bundle is
@@ -833,7 +850,7 @@ window.__ModuleLoader__.load({
 		*
 		* Every decision it makes is in `decide.ts`; this file is only the wiring.
 		*
-		* @module dsh-pet-bridge/client
+		* @module dsh-pet-seen/client
 		*/
 		/** Services this half needs. These are runtime package names, not values. */
 		const inject = ["sessions", "connection"];
@@ -872,7 +889,7 @@ window.__ModuleLoader__.load({
 		*/
 		const SEEN_RETRY_COOLDOWN_MS = 2e3;
 		/** Per-tab-instance id key; survives reloads of the same tab. */
-		const TAB_ID_KEY = "dsh-pet-bridge:tab-id";
+		const TAB_ID_KEY = "dsh-pet-seen:tab-id";
 		/**
 		* Ask a timer not to hold the process open.
 		*
@@ -934,7 +951,7 @@ window.__ModuleLoader__.load({
 		*/
 		function apply(ctx) {
 			const log = (message) => {
-				ctx.logger?.info?.(`dsh-pet-bridge: ${message}`);
+				ctx.logger?.info?.(`dsh-pet-seen: ${message}`);
 			};
 			const id = tabId();
 			/**

@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------------------
-# dsh-pet-bridge bundle patch
+# dsh-pet-seen bundle patch
 # ---------------------------------------------------------------------------
 # A DSH plugin is mounted by a top-level YAML array of loader patch entries.
 # This one inserts the plugin into the profile's loader tree; `name` is the
@@ -14,8 +14,8 @@
 # DSH process requires changing both `controlPort` here and in the second
 # copy's config, because the control port is a fixed loopback listener.
 - insert:
-    - id: dsh-pet-bridge
-      name: dsh-pet-bridge
+    - id: dsh-pet-seen
+      name: dsh-pet-seen
       config:
         controlPort: 17323
         petPort: 17322

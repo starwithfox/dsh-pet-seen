@@ -17,7 +17,7 @@
  *   places 0.1.5 and 0.2.0 keep it, taking the first non-empty answer, so a
  *   runtime which moves it again degrades instead of going blind.
  *
- * @module dsh-pet-bridge/client/decide
+ * @module dsh-pet-seen/client/decide
  */
 
 import type { PendingNotice, SessionReaderIndex } from '../protocol.js'

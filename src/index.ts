@@ -1,5 +1,5 @@
 /**
- * Host half of `dsh-pet-bridge`.
+ * Host half of `dsh-pet-seen`.
  *
  * Responsibilities, in the order they are set up in {@link apply}:
  *
@@ -17,7 +17,7 @@
  * are resolved from the live DSH installation during type checking, and the
  * bundle carries no runtime dependency on them — see `tsconfig.check.json`.
  *
- * @module dsh-pet-bridge
+ * @module dsh-pet-seen
  */
 
 import { randomUUID } from 'node:crypto'
@@ -58,7 +58,7 @@ import type { BrowserRoutes } from './routes.js'
 export type { AgentFace, PinnedHarnessShapes, SessionEventFace, SessionFace } from './pins.js'
 
 /** Plugin name as the loader knows it. */
-export const name = 'dsh-pet-bridge'
+export const name = 'dsh-pet-seen'
 
 /** Services this plugin waits for. `webServer` is *not* here; see {@link apply}. */
 export const inject = ['agents', 'sessions']
@@ -142,6 +142,7 @@ function turnEndKind(reason: unknown): TurnEndKind {
     case 'aborted':
     case 'blocked':
     case 'error':
+    case 'forked':
     case 'max-tokens':
     case 'interrupted':
       return kind
@@ -189,7 +190,12 @@ function errorMessage(category: ErrorCategory): string {
   }
 }
 
-/** Human-readable one-liner for a settled run, by turn-end kind. */
+/**
+ * Human-readable one-liner for a settled run, by turn-end kind.
+ *
+ * `forked` mints no notice, so nothing here reaches the pet through that path;
+ * the line exists so the switch stays total over {@link TurnEndKind}.
+ */
 function completionMessage(kind: TurnEndKind): string {
   switch (kind) {
     case 'completed': return '任务完成'
@@ -198,6 +204,7 @@ function completionMessage(kind: TurnEndKind): string {
     case 'error': return '运行出错'
     case 'aborted': return '已中止'
     case 'interrupted': return '中断（会话恢复时补记）'
+    case 'forked': return '分叉时截断（继承的前缀回合）'
     case 'unknown': return '运行结束（结束原因无法识别）'
   }
 }
@@ -215,11 +222,11 @@ interface CompletionDispatch {
  *
  * The point of the split is that `reason` alone no longer has to carry the whole
  * meaning: a pet can act on the event name and use `reason` only for wording. In
- * particular `aborted` / `interrupted` are **not** completions — they mean the
- * run stopped, so they mint no notice and nothing pops. `error` / `blocked` do
- * mint one, and the pet decides whether a failed run deserves a popup; that is
- * why a notice-bearing `error` carries `noticeId` while the running-time
- * failures (`tool/result`, `agent/error`) do not.
+ * particular `aborted` / `interrupted` / `forked` are **not** completions — they
+ * mean the run stopped, so they mint no notice and nothing pops. `error` /
+ * `blocked` do mint one, and the pet decides whether a failed run deserves a
+ * popup; that is why a notice-bearing `error` carries `noticeId` while the
+ * running-time failures (`tool/result`, `agent/error`) do not.
  *
  * @param kind - the settled run's reason.
  * @returns the event name and whether a notice is minted.
@@ -234,6 +241,11 @@ export function completionDispatch(kind: TurnEndKind): CompletionDispatch {
     case 'error':
     case 'blocked':
       return { event: 'error', notice: true }
+    // A fork cuts an unclosed prefix turn. The parent has not finished and the
+    // child has not started, so there is nothing to announce: going `idle` is
+    // the honest reading, and `interrupted` is reserved for "repaired after a
+    // crash". Nothing pops, which is what the DECISION-FORKED record requires.
+    case 'forked':
     case 'aborted':
     case 'interrupted':
     case 'unknown':
@@ -264,10 +276,10 @@ export function apply(
   },
 ): void {
   const log = (message: string): void => {
-    ctx.logger?.info?.(`dsh-pet-bridge: ${message}`)
+    ctx.logger?.info?.(`dsh-pet-seen: ${message}`)
   }
   const warn = (message: string): void => {
-    ctx.logger?.warn?.(`dsh-pet-bridge: ${message}`)
+    ctx.logger?.warn?.(`dsh-pet-seen: ${message}`)
   }
 
   const store = new NoticeStore({
