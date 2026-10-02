@@ -65,6 +65,22 @@ document.visibilityState === 'visible' && document.hasFocus()
 
 **L2 在本插件里只是遥测**，永远不能取消提示。只有 L3 能，且宿主还要再核对一次。
 
+#### 已知限制（L3 的证据强度上限）
+
+**L3 只能证明"有机会看到"，不能证明"看到了"。** 它是**几何**判定：读的是"这次完成结果自己的那一行
+是否进入滚动容器视口并连续停留 ≥ `seenDwellMs`"，而不是眼球或阅读行为。所以本插件取消提示的依据是
+"用户**有没有机会**看到"，不是"用户读没读"——**这是设计选择，不是待修的缺陷**；上表误判列里那句
+"仍无法证明真的读了"就是这条上限，这里把它单独写明白。
+
+- **论据**：`REFS-ANALYSIS.md` §4.3 指出，参考实现废弃的是**另一个问题**（"用户目光是否落在这只宠物上"，
+  要猜意图），与本插件读的"行级几何 + 连续停留"不是同一件事 ⇒ **不能据此否掉 L3，也不能据此抬高它**。
+  收编在 `working-docs/STATUS.md` §10.2。
+- **两条同源边界**（都不是本条的替代品，别互相顶替）：
+  ① L3 的**前置**是 L2（页面可见且聚焦），而"Alt+Tab 之后焦点 API 是否可信"**仍未在 Electron 上单独实测**
+     ——`working-docs/STATUS.md` §10.1；
+  ② face 曾因 harness 重挂载会话槽而**静默失效**（页面此后永不 `/seen`，只有刷新才恢复）——那是**缺陷，已修**，
+     见 §5"DOM face 每次判定都重新解析"。**修好 face 只保证"确实有机会看到"，不提高 L3 的证据强度。**
+
 ---
 
 ## 2. 结构
@@ -395,7 +411,9 @@ npm run check           # 以上全部（含产物一致性闸门）
 `smoke:bundle` 现在还断言两个产物里**没有探针残留**（denylist：`tamper-probe` / `probe-residue`）
 与**没有本机绝对路径**（`C:\Users` / `C:/Users` / `star_fox` / 仓库名 / `file:///`）。
 
-**约定**：往内置产物追加一行来做伪造探针时，**那一行必须含 `tamper-probe`**，否则闸门认不出来。
+**约定**（成文落点；第 8 步收口）：往内置产物追加一行来做伪造探针时，**那一行必须含 `tamper-probe`**
+——闸门认的 denylist 就是 `['tamper-probe', 'probe-residue']`（见 `tools/smoke-bundle.mjs` 的
+`PROBE_RESIDUE` 与 "built artifacts carry no probe residue" 那条检查），不含就认不出来、**等于没打探针**。
 来由是一次真实事故：4.3 的 P1 探针往 `client/client.js` 追加了一行，而 `file:` 安装与工作树**同 inode
 （硬链接）**，那一行便**穿透**进了 `node_modules`，探针还原时又断开了链接——装出去的那份就冻在
 "第 4.2 步产物 + 探针残留"上一整天，而所有闸门都是绿的（`working-docs/IMPL-LOG-SESSION-CURRENT.md` 第 5.1 步）。
