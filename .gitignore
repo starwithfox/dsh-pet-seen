@@ -16,6 +16,11 @@ working-docs/
 archive/
 refs/
 
+# --- AGENTS.md 刻意【不提交】：只给本机 agent 看 ---
+#   必须放仓库根才会被自动加载（放 working-docs/ 是"读完该目录下的文件才触发"，太晚）。
+#   代价：它没有版本史，`git clean -xdf` 会把它删掉 —— 接受。
+/AGENTS.md
+
 # --- lib/ 与 client/ 刻意【入库】，别再给这两个目录加忽略规则 ---
 #   1) 发布口径是「git clone → dsh plugin add file:<clone>」，克隆即可安装，
 #      不要求用户装 Node.js 或任何工具链；
