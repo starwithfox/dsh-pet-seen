@@ -18,7 +18,8 @@ refs/
 
 # --- AGENTS.md 刻意【不提交】：只给本机 agent 看 ---
 #   必须放仓库根才会被自动加载（放 working-docs/ 是"读完该目录下的文件才触发"，太晚）。
-#   代价：它没有版本史，`git clean -xdf` 会把它删掉 —— 接受。
+#   它的史不进公开仓：改完跑 `pwsh working-docs/agents/agents-mirror.ps1 sync -m "<理由>"`，
+#   镜像落进 working-docs 独立本地仓（无远端；`git clean -xdf` 不碰它，根件被删就 `restore` 取回）。
 /AGENTS.md
 
 # --- lib/ 与 client/ 刻意【入库】，别再给这两个目录加忽略规则 ---
