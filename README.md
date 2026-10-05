@@ -288,7 +288,7 @@ v1 **只发**：事件名、`sessionId`、会话标题（可关、截断 160）�
 ## 5. 开发
 
 ```powershell
-npm run typecheck       # 对着本机运行中的 DSH 类型检查（见 §5.2）
+npm run typecheck       # 对着仓库自己 pin 的 harness 声明类型检查（见 §5.2）
 npm test                # 编译测试 + 跑全部单测/集成测试（末行打印实测条数）
 npm run build           # 两个 bundle（lib/index.js、client/client.js）
 npm run smoke:bundle    # 加载真实产物：纯净性、manifest、产物卫生、构建标识
@@ -297,7 +297,7 @@ npm run probe:http      # 探针：web 资产 + 控制面；陈旧半边、两�
 npm run roundtrip       # 离线跑通全链路（不碰运行中的 DSH）
 npm run acceptance      # 真机 CDP 验收（一次只跑一个宿主）
 npm run mock-pet        # 假桌宠：收事件 + 交互 ack（seen/dismiss/state/quit）
-npm run compat:0.2.0    # 对着 0.2.0-rc.2 的声明再查一遍（前置不在版本控制里，见 §5.2）
+npm run compat:0.2.0    # 对着 0.2.0-rc.2 的声明再查一遍（要联网，故意不接进 check；见 §5.2）
 npm run check           # typecheck → build → smoke:bundle → check:artifacts → test（唯一闸门）
 ```
 
@@ -309,11 +309,13 @@ npm run check           # typecheck → build → smoke:bundle → check:artifac
 - 改了 `src/` 的提交**必须**带重建后的产物；`prepack` 保证 `npm pack` / `npm publish` 前先重建。
 - `smoke:bundle` 还断言产物里**没有探针残留**（denylist：`tamper-probe` / `probe-residue`）与**没有本机绝对路径**（`C:\Users` / `C:/Users` / `star_fox` / 仓库名 / `file:///`）。⇒ 往产物追加一行做伪造探针时，**那一行必须含 `tamper-probe`**，否则闸门认不出来、等于没打探针。
 
-### 5.2 类型检查对着**活的** DSH
+### 5.2 类型检查对着**哪份** harness 声明
 
-`tsconfig.check.json` 用 `paths` 把 `@deepseek-ai/dsh-session`、`dsh-agent`、`cordis` 指向本机 profile 里**正在运行的那份声明**，而不是在插件里另装一份 —— 发布的 prerelease peer 范围互相打架，而且**只有对着宿主真正加载的声明检查，编译通过才说明运行时不会炸**。
+`tsconfig.check.json` **不写 `paths`**：`@deepseek-ai/dsh-session`、`dsh-agent`、`cordis`、`schemastery` 由仓库自己的 `devDependencies` 提供（现取 pin 的是 **`0.2.0-rc.2`** 线），所以**机器上没有任何 DSH 安装、一个干净克隆**照样能跑 `npm ci && npm run check`。这现在是硬要求而不是偏好：CI 上没有宿主可指（见 §6）—— 一旦把类型检查退回本机 profile 路径，CI 必红。
 
-`tsconfig.compat-0.2.0.json` 针对另一个受支持宿主（`0.2.0-rc.2`）再查一遍；它指向 `_scratch/` 下从 registry 取回、并与桌面 `app.asar` 内 `.js` 逐字节核对过的声明 —— 该前置**不在版本控制里**，所以在别的机器上这条命令会失败，**故意不接进 `npm run check`**。它**红**才是重点：`src/pins.ts` 的 `_ReasonsCovered` 会在宿主新增 `turn/end` kind 时直接编译失败。
+`tsconfig.compat-0.2.0.json` 不再自己指任何路径（它 `extends` 上面的配置）：主 `check` 已经是同一条 `0.2.0-rc.2` 线，它只是把"这份声明"再查一遍；**故意不接进 `npm run check`** —— 它要联一次网，属"在线闸门"。它**红**才是重点：`src/pins.ts` 的 `_ReasonsCovered` 会在宿主新增 `turn/end` kind 时直接编译失败。
+
+⚠️ **覆盖面的代价**：活 `web` profile 跑的是 `0.1.5` 线，而基准 `check` 是 `0.2.0-rc.2` ⇒ **那条线目前没有栅门**（`0.1.5` 线装不进 `devDependencies`：内部 peer 互不相容；要守它只能相对遍历指活 profile）。范围口径见 §2.4。
 
 ### 5.3 构建标识握手
 
