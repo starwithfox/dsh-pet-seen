@@ -22,8 +22,36 @@ jobs:
     permissions:
       id-token: write # 换 OIDC token 用；缺它 npm 会以 ENEEDAUTH 结束
       contents: read
+      checks: read # 读本提交的 ci 结果（下面那步的闸门）
     steps:
       - uses: actions/checkout@v4
+
+      # 发布前先确认**这个提交**的 `ci` 已经全绿（PL-EN-RL-01）。
+      # 为什么是机械闸门而不是文档纪律：2026-10-05 真的发生过「Release 先发、`check (22.x)` 后红」——
+      # 顺序写在文档里照样会被跳过，所以让它在这里硬失败。
+      - name: 要求本提交的 ci 已全绿
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          curl -sS -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/check-runs?per_page=100" \
+            -o "${RUNNER_TEMP}/check-runs.json"
+          node -e '
+            const fs = require("fs");
+            const { check_runs: runs } = JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + "/check-runs.json", "utf8"));
+            const ci = runs.filter((r) => /^check/.test(r.name));
+            if (ci.length === 0) {
+              console.error("这个提交还没有 ci 的检查结果 —— 先 push 并等 ci 全绿，再发 Release");
+              process.exit(1);
+            }
+            const bad = ci.filter((r) => r.conclusion !== "success");
+            if (bad.length > 0) {
+              console.error("ci 不是全绿：" + bad.map((r) => r.name + "=" + (r.conclusion ?? r.status)).join(", "));
+              process.exit(1);
+            }
+            console.log("ci 全绿：" + ci.map((r) => r.name).join(", "));
+          '
 
       # 用 Node 24 而不是 22：Trusted Publishing 要求 npm >= 11.5.1，而 Node 22.19 随附的是 npm 10。
       # （本机现取：node 24.19.0 → npm 11.17.0。）
