@@ -338,7 +338,23 @@ harness 的结构化面集中在 **`src/pins.ts`** —— 唯一引用 DSH 内�
 - **测试怎么跑**：`node --test` 默认给每个测试文件开子进程（`stdio: 'pipe'`），受限沙箱里会 `EPERM`，所以用 `--test-isolation=none --test-force-exit` 单进程跑；测试文件显式列出。
 - **DOM face 每次判定都重新解析**：L3 依赖 `[data-chat-flow]` 与 `[data-conversation-scroll]`，而 harness 每次切换会话都会重挂载会话槽 ⇒ `createVisibilityDeps()` **每次读取时重新 `query`**。存成值会在第一次切换后变成死引用（矩形测量全 0 ⇒ `isTurnVisible()` 恒 false ⇒ 页面此后**永远不发 `/seen` 且不打日志**，只有刷新才恢复）。
 
-## 6. 目录
+## 6. 发布与 CI
+
+发布走 **GitHub Actions + npm Trusted Publishing（OIDC）**：workflow 里**没有任何 npm token**，凭据由 GitHub 的 OIDC token 现场换取。npm 侧只需要绑一处 —— 在 npmjs.com 的包设置里把 **Trusted Publisher** 指向本仓：仓库 `starwithfox/dsh-pet-seen`、workflow 文件名 **`publish.yml`**、environment 留空（**文件名改了要重新绑定**）。
+
+两个 workflow 的分工是固定的：`.github/workflows/ci.yml` 在 push 到 `main` 与每个 PR 上跑 `npm ci` → `npm run check`，Node `22.x` 与 `24.x` 各跑一次（`engines` 声明的就是这两条线）；`.github/workflows/publish.yml` 在**发布 Release（published）**或**手动 dispatch** 时跑 `npm ci` → `npm run check` → 校验 tag 与 `package.json` 的 `version` 一致 → `npm publish`（`prepack` 会先 `npm run build`，所以包里带的是刚重建的两半产物）。
+
+发一个新版本，顺序不能换：① 改 `package.json` 的 `version`；② `npm run check` 必须绿，改了 `src/**` 就要把重建后的 `lib/` 与 `client/` 一起提交（见 §5.1）；③ push 到 `main`，等 `ci` 绿；④ 在 GitHub 发 Release，**tag 用 `v<version>`**（例如 `v0.1.1`）—— publish job 会拿 tag 与 `version` 对照，不一致直接失败（发错版本不可逆：npm 的撤回窗口只有 72 小时）；⑤ 等 `publish` 绿，`npm view dsh-pet-seen@<version>` 应能查到。
+
+发布只从 CI 走：`npm publish` **不要在本机直接跑** —— 本机 registry 默认是只读镜像，发布走不通，而 OIDC 这条路径本来也不需要任何长期 token。
+
+CI 上**没有 DSH 安装**，所以类型检查只能对着仓库自己 `devDependencies` 里 pin 的 harness 声明跑：`tsconfig.check.json` 不写 `paths`，干净克隆 `npm ci && npm run check` 即可。这也是"别把类型检查退回本机 profile 路径"的原因 —— 一退回去，CI 必红。
+
+**CI 绿不等于所有宿主版本都验过**：`npm run check` 覆盖的是 `devDependencies` pin 的那条线；`compat:0.2.0` 需要联网，**故意不接进** `check`；活 `web` profile 跑的那条 `0.1.5` 线目前**没有栅门**（范围口径见 §2.4）。
+
+包内容不因 CI 改变：`files` 仍是 `lib`、`client`、`cordis.patch.yml`、`README.md`、`LICENSE`；`src/`、`tests/`、`tools/` 与 `.github/` 都不随包发布。
+
+## 7. 目录
 
 ```
 ├── package.json          # dsh.bundle.patch + dsh.client.{platform,inject}
@@ -358,7 +374,7 @@ harness 的结构化面集中在 **`src/pins.ts`** —— 唯一引用 DSH 内�
 └── tools/                # build-id、mock-pet、roundtrip、smoke-bundle、probe-http、CDP 验收驱动
 ```
 
-## 7. 许可与范围
+## 8. 许可与范围
 
 - **本包（`dsh-pet-seen`）是 MIT，著作权归 `starwithfox`**：正文见 `LICENSE`，且随包发布（`npm pack` 会带你核到）。
 - **范围声明**：本包**只含 DSH 插件侧** —— `lib/`、`client/`、`cordis.patch.yml`、`README.md`、`LICENSE`（即 `package.json` 的 `files` 清单）。
