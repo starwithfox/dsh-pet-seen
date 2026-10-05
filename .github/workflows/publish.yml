@@ -1,0 +1,56 @@
+# 发布（PL-EN-RL-01）：npm Trusted Publishing (OIDC)。
+#
+# ⚠️ npmjs.com 侧绑定的 "workflow filename" 必须逐字是 `publish.yml`（改了名要重新绑定）。
+#    绑定参数：仓库 `starwithfox/dsh-pet-seen` + workflow `publish.yml`，environment 留空。
+#
+# 这里**没有任何 npm token**：凭据由 GitHub 的 OIDC token 现场换，devDependencies 与 secrets 都不碰它。
+# 也**不设** `setup-node` 的 `registry-url` —— 那会写一份带 `_authToken=${NODE_AUTH_TOKEN}` 的 .npmrc，
+# 而本路径根本不需要 token；发布目标由 package.json 的 `publishConfig.registry` 指定。
+name: publish
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write # 换 OIDC token 用；缺它 npm 会以 ENEEDAUTH 结束
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      # 用 Node 24 而不是 22：Trusted Publishing 要求 npm >= 11.5.1，而 Node 22.19 随附的是 npm 10。
+      # （本机现取：node 24.19.0 → npm 11.17.0。）
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.x"
+
+      - run: npm ci
+
+      # 发布前把闸门再跑一遍：workflow_dispatch 路径上没有别的栅门，Release 路径上也不该只信 CI。
+      - run: npm run check
+
+      # tag 与 version 对不上就停下 —— 发错版本是不可逆的（npm 的撤回窗口只有 72 小时）。
+      - name: 校验 tag 与 package.json 的 version 一致
+        if: github.event_name == 'release'
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          node -e '
+            const v = require("./package.json").version;
+            const t = process.env.TAG;
+            if (t !== v && t !== "v" + v) {
+              console.error("tag " + t + " 与 package.json 的 version " + v + " 不一致：先改 version、重建产物并提交，再发 Release");
+              process.exit(1);
+            }
+            console.log("tag " + t + " 与 version " + v + " 一致");
+          '
+
+      # `prepack` 会在发布前自动 `npm run build` ⇒ 包里带的是刚重建的两半产物。
+      - run: npm publish

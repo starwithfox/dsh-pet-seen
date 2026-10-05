@@ -1,0 +1,34 @@
+# 产品闸门（PL-EN-RL-01）：push 到 main 与每个 PR 上跑 README「5. 开发」那条唯一闸门。
+#
+# 两个刻意的决定：
+#   1. 只有 Node 侧 job。本包不含桌宠代码（本仓 tracked *.py = 0），Python 测试留在桌宠自己的项目里
+#      —— 在这里加 Python job 没有对象可跑，只会永远 SKIP，而 SKIP 不算通过。
+#   2. 不写 `cache: npm`。仓库内 `.npmrc` 把 cache 重定向到仓库内的 `.npm-cache`，
+#      而 actions/setup-node 会用 `npm config get cache` 去解析缓存路径 ⇒ 解析出的是工作树内的目录，
+#      缓存一个刚检出的目录没有意义，还会和「缓存留在仓库里」那条注释打架。
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # package.json 的 engines 是 `^22.19.0 || >=24.0.0` ⇒ 两条线各跑一次，都绿才算绿。
+        node: ["22.x", "24.x"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - run: npm ci
+      # typecheck → build → smoke:bundle → check:artifacts → test（顺序即语义，别拆开跑）
+      - run: npm run check
