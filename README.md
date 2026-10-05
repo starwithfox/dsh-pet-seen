@@ -55,22 +55,30 @@ DSH 的 WebServer 是**给浏览器**用的（活在页面同源与 same-origin 
 
 装到哪由 **profile** 决定，而两个 profile **不共享 `node_modules`** ⇒ 得分别装、分别升级：
 
+先把仓库克隆到本地（地址与 `package.json` 的 `repository` 同源）：
+
+```powershell
+git clone https://github.com/starwithfox/dsh-pet-seen.git
+```
+
 | 装到哪 | profile | 怎么装 |
 | --- | --- | --- |
 | DSH Web（`dsh web`：浏览器 UI 与 CLI） | `web` | 用下面的命令 |
 | DSH 桌面应用（Electron） | `desktop`（`~/.dsh/profiles/desktop`） | **不是下面的命令** —— 桌面端的 profile 由桌面应用自己管，走应用内入口，见 2.1 |
 
 ```powershell
+cd dsh-pet-seen                        # 上一步克隆出来的目录
+
 # 主推：软链（Junction），改源码不必重装
-dsh plugin add --profile web link:<克隆目录>
+dsh plugin add --profile web link:.
 
 # 备选：实体拷贝（硬链接镜像），升级语义不同
-dsh plugin add --profile web file:<克隆目录>
+dsh plugin add --profile web file:.
 
 # 装完必须重启 DSH 才会加载宿主半边（这一步会中断正在运行的会话）
 ```
 
-- **仓库根目录就是插件本身**，所以 `link:` / `file:` 指的都是仓库根。
+- **仓库根目录就是插件本身**，所以 `link:` / `file:` 指的都是仓库根（上面 `cd` 进克隆目录后用 `.`）。
 - **克隆后不需要构建**：`lib/index.js`（宿主侧）与 `client/client.js`（浏览器侧）**已入库**，安装过程不需要 Node.js 或任何工具链。
 - **只有改了 `src/` 才需要构建**（Node 22+）：`npm install && npm run build`；改完必须把 `src/` 与重建后的产物**一起提交**，否则 `npm run check` 会红。产物由 tsdown 生成，**不要手改**。
 - `dsh plugin` 只是 pnpm 的一层封装，`add` **不会热加载**已运行的宿主。
