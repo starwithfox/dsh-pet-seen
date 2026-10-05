@@ -16,6 +16,14 @@
   "type": "module",
   "license": "MIT",
   "author": "starwithfox",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/starwithfox/dsh-pet-seen.git"
+  },
+  "homepage": "https://github.com/starwithfox/dsh-pet-seen#readme",
+  "bugs": {
+    "url": "https://github.com/starwithfox/dsh-pet-seen/issues"
+  },
   "main": "lib/index.js",
   "exports": {
     ".": "./lib/index.js",
