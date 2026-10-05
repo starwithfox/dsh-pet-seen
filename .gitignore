@@ -15,6 +15,7 @@ _scratch/
 working-docs/
 archive/
 refs/
+.agents/
 
 # --- AGENTS.md 刻意【不提交】：只给本机 agent 看 ---
 #   必须放仓库根才会被自动加载（放 working-docs/ 是"读完该目录下的文件才触发"，太晚）。

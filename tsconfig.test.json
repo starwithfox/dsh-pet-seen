@@ -3,8 +3,9 @@
  *
  * Tests import the TypeScript sources directly, so the suite type-checks and
  * exercises the same code that ships, without a declaration-emitting pass in
- * between. The `paths` mapping is the one `tsconfig.check.json` uses, so the
- * harness declarations resolved here are the ones a running host loads.
+ * between. The harness declarations resolve the ordinary way, out of this
+ * repository's own `node_modules` (`devDependencies`, PL-EN-FX-01) — there is no
+ * `paths` mapping, so the suite compiles on a clean clone.
  *
  * The browser half is compiled here too, which is why the DOM libs are on: the
  * suite drives the real `src/client/**` modules against a hand-written DOM
@@ -21,13 +22,6 @@
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "types": ["node"],
-    "baseUrl": ".",
-    "paths": {
-      "@deepseek-ai/cordis": ["C:/Users/star_fox/.dsh/profiles/node_modules/@deepseek-ai/cordis/lib/types/index.d.ts"],
-      "@deepseek-ai/schemastery": ["C:/Users/star_fox/.dsh/profiles/node_modules/@deepseek-ai/schemastery/lib/types/index.d.ts"],
-      "@deepseek-ai/dsh-session": ["C:/Users/star_fox/.dsh/profiles/node_modules/@deepseek-ai/dsh-session/lib/types/index.d.ts"],
-      "@deepseek-ai/dsh-agent": ["C:/Users/star_fox/.dsh/profiles/node_modules/@deepseek-ai/dsh-agent/lib/types/index.d.ts"]
-    },
     "strict": true,
     "exactOptionalPropertyTypes": true,
     "noUncheckedIndexedAccess": true,

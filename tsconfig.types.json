@@ -5,9 +5,9 @@
  * `@deepseek-ai/cordis` are imported **for types only** in `src/pins.ts` (the
  * host-coupling module; `src/index.ts` re-exports the faces from there and
  * references no DSH internal type itself). Resolving them is what makes the
- * check meaningful, so this config does not attempt to run on a machine with no
- * DSH installation — `tsconfig.check.json` is exactly this file plus the `paths`
- * mapping that points at the live profile, and it is what `npm run typecheck`
+ * check meaningful. They come from this repository's own `node_modules`, pinned
+ * in `devDependencies` (PL-EN-FX-01), so no `paths` mapping and no host
+ * installation is involved; `tsconfig.check.json` is what `npm run typecheck`
  * uses.
  *
  * There is deliberately no separate declaration-emitting pass: the plugin is

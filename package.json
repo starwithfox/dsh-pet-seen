@@ -74,7 +74,10 @@
     }
   },
   "devDependencies": {
-    "@deepseek-ai/schemastery": "^3.18.2",
+    "@deepseek-ai/cordis": "4.0.4",
+    "@deepseek-ai/dsh-agent": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-session": "0.2.0-rc.2",
+    "@deepseek-ai/schemastery": "3.18.4",
     "@types/node": "^24.0.0",
     "tsdown": "^0.22.14",
     "typescript": "^5.9.0"
