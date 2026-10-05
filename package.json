@@ -59,7 +59,7 @@
     "typecheck": "tsc -p tsconfig.check.json && tsc -p tsconfig.client.json && tsc -p tsconfig.test.json --noEmit",
     "compat:0.2.0": "tsc -p tsconfig.compat-0.2.0.json",
     "build:test": "tsc -p tsconfig.test.json",
-    "test": "npm run build:test && node --test --test-isolation=none --test-force-exit --test-timeout=60000 test-dist/tests/state.test.js test-dist/tests/protocol.test.js test-dist/tests/pins.test.js test-dist/tests/credentials.test.js test-dist/tests/browser-auth.test.js test-dist/tests/integration.test.js test-dist/tests/visibility.test.js test-dist/tests/decide.test.js test-dist/tests/routes.test.js test-dist/tests/client.test.js test-dist/tests/acceptance-page.test.js test-dist/tests/session-picker.test.js test-dist/tests/gate-c-judge.test.js",
+    "test": "npm run build:test && node tools/run-tests.mjs",
     "smoke:bundle": "node tools/smoke-bundle.mjs",
     "roundtrip": "node tools/roundtrip.mjs",
     "auth:check": "node tools/check-browser-auth.mjs",
