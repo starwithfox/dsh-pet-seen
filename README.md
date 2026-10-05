@@ -337,16 +337,17 @@ harness 的结构化面集中在 **`src/pins.ts`** —— 唯一引用 DSH 内�
 
 ### 5.5 其它
 
-- **测试怎么跑**：`node --test` 默认给每个测试文件开子进程（`stdio: 'pipe'`），受限沙箱里会 `EPERM`，所以用 `--test-isolation=none --test-force-exit` 单进程跑；测试文件显式列出。
+- **测试怎么跑**：`npm test` = `npm run build:test` + `node tools/run-tests.mjs`。运行器把测试文件显式列出，并**按当前 Node 线探测单进程开关**：Node 24 认 `--test-isolation=none`，Node 22 只认 `--experimental-test-isolation=none`（喂它稳定名会直接 `node: bad option: --test-isolation=none` + exit 9，压根不读测试文件），两条线都不认时退回默认的逐文件隔离。**为什么非要单进程**：默认的逐文件子进程走 `stdio: 'pipe'`，受限沙箱里会 `EPERM`。两条线的现取读数（同一套用例）：`node 24.19.0` → `--test-isolation=none` → 203/203；`node 22.23.3` → `--experimental-test-isolation=none` → 203/203。
 - **DOM face 每次判定都重新解析**：L3 依赖 `[data-chat-flow]` 与 `[data-conversation-scroll]`，而 harness 每次切换会话都会重挂载会话槽 ⇒ `createVisibilityDeps()` **每次读取时重新 `query`**。存成值会在第一次切换后变成死引用（矩形测量全 0 ⇒ `isTurnVisible()` 恒 false ⇒ 页面此后**永远不发 `/seen` 且不打日志**，只有刷新才恢复）。
 
 ## 6. 发布与 CI
 
 发布走 **GitHub Actions + npm Trusted Publishing（OIDC）**：workflow 里**没有任何 npm token**，凭据由 GitHub 的 OIDC token 现场换取。npm 侧只需要绑一处 —— 在 npmjs.com 的包设置里把 **Trusted Publisher** 指向本仓：仓库 `starwithfox/dsh-pet-seen`、workflow 文件名 **`publish.yml`**、environment 留空（**文件名改了要重新绑定**）。
 
-两个 workflow 的分工是固定的：`.github/workflows/ci.yml` 在 push 到 `main` 与每个 PR 上跑 `npm ci` → `npm run check`，Node `22.x` 与 `24.x` 各跑一次（`engines` 声明的就是这两条线）；`.github/workflows/publish.yml` 在**发布 Release（published）**或**手动 dispatch** 时跑 `npm ci` → `npm run check` → 校验 tag 与 `package.json` 的 `version` 一致 → `npm publish`（`prepack` 会先 `npm run build`，所以包里带的是刚重建的两半产物）。
+两个 workflow 的分工是固定的：`.github/workflows/ci.yml` 在 push 到 `main` 与每个 PR 上跑 `npm ci` → `npm run check`，Node `22.x` 与 `24.x` 各跑一次（`engines` 声明的就是这两条线）；`.github/workflows/publish.yml` 在**发布 Release（published）**或**手动 dispatch** 时跑：**先读本提交的 `ci` 结果**（不是全绿就当场失败）→ `npm ci` → `npm run check` → 校验 tag 与 `package.json` 的 `version` 一致 → `npm publish`（`prepack` 会先 `npm run build`，所以包里带的是刚重建的两半产物）。
 
-发一个新版本，顺序不能换：① 改 `package.json` 的 `version`；② `npm run check` 必须绿，改了 `src/**` 就要把重建后的 `lib/` 与 `client/` 一起提交（见 §5.1）；③ push 到 `main`，等 `ci` 绿；④ 在 GitHub 发 Release，**tag 用 `v<version>`**（例如 `v0.1.1`）—— publish job 会拿 tag 与 `version` 对照，不一致直接失败（发错版本不可逆：npm 的撤回窗口只有 72 小时）；⑤ 等 `publish` 绿，`npm view dsh-pet-seen@<version>` 应能查到。
+**顺序不能换：先 push、等 `ci` 全绿，再触发发布。** 这不是提醒而是硬闸门 —— publish job 的第一步就是读该提交的 ci 检查结果，`check (22.x)` / `check (24.x)` 有任何一条不是 `success`（或者这个提交还没有结果），发布直接失败。发一个新版本：
+① 改 `package.json` 的 `version`；② `npm run check` 必须绿，改了 `src/**` 就要把重建后的 `lib/` 与 `client/` 一起提交（见 §5.1）；③ push 到 `main`，**等 `ci` 两个 matrix 都绿**；④ 在 GitHub 发 Release，**tag 用 `v<version>`**（例如 `v0.1.1`）—— publish job 会拿 tag 与 `version` 对照，不一致直接失败（发错版本不可逆：npm 的撤回窗口只有 72 小时）；⑤ 等 `publish` 绿，`npm view dsh-pet-seen@<version>` 应能查到。
 
 发布只从 CI 走：`npm publish` **不要在本机直接跑** —— 本机 registry 默认是只读镜像，发布走不通，而 OIDC 这条路径本来也不需要任何长期 token。
 
