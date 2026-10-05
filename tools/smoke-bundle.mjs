@@ -17,14 +17,14 @@
  * 4. `cordis.patch.yml` inserts exactly the entry the package name implies.
  * 5. `package.json` wires the bundle, client and patch entries.
  * 6. Neither built artifact carries **probe residue** or a **local absolute
- *    path** (added 2026-10-02, step 5.1).
+ *    path** (added 2026-10-02, PL-OP-FX-01).
  * 7. Both artifacts carry the **build identity of the current sources**
- *    (added 2026-10-02, step 6.1).
+ *    (added 2026-10-02, PL-EN-NW-02).
  *
  * Check 7 exists because nothing else could answer "is this artifact current?".
  * `check:artifacts` compares the worktree artifacts with `HEAD`, so editing
  * `src/` and never running `build` left it green — a false negative its own
- * P2 probe demonstrated in step 4.3 — and the same question about an *installed*
+ * P2 probe demonstrated while the artifact gate was built (PL-EN-NW-01) — and the same question about an *installed*
  * copy has no repository-side answer at all. Recomputing the identity from
  * `src/` and demanding it in both bundles closes the first half here and makes
  * the second half detectable in the field: the two halves state which build they
@@ -33,12 +33,13 @@
  * Consequence, by design rather than by fault: after editing `src/` this check
  * fails until `npm run build` runs, exactly as `check:artifacts` does.
  *
- * Check 6 exists because a fake probe reached an installed copy once: during
- * step 4.3 a tamper probe appended `// tamper-probe` to the worktree
+ * Check 6 exists because a fake probe reached an installed copy once: while the
+ * artifact gate was being built (PL-EN-NW-01) a tamper probe appended `// tamper-probe` to the worktree
  * `client/client.js`, the web profile's `file:` install shared that file's inode
  * (hard link), so the line propagated into `node_modules`, the probe's restore
  * then broke the link — and the installed client half stayed frozen at
- * "4.2-era artifact + probe residue" for a day (see `IMPL-LOG` step 5.1). A line
+ * "4.2-era artifact + probe residue" for a day (the install-staleness round,
+ * PL-OP-FX-01). A line
  * of text is harmless in itself; the reason it is a gate is that nothing said
  * so, and that a `npm pack` in that window would have shipped it.
  *
@@ -140,7 +141,7 @@ const artifacts = { 'lib/index.js': hostSource, 'client/client.js': clientSource
 /*
  * Residue a fake probe leaves when it edits a *built* artifact by hand. Both
  * halves are shipped, and the web profile's `file:` install hard-links them, so
- * an appended line can reach a user's `node_modules` (it did — step 5.1).
+ * an appended line can reach a user's `node_modules` (it did — PL-OP-FX-01).
  */
 const PROBE_RESIDUE = ['tamper-probe', 'probe-residue']
 check('built artifacts carry no probe residue', () => {
@@ -157,7 +158,7 @@ check('built artifacts carry no probe residue', () => {
 
 /*
  * The bundle must not leak the machine it was built on. This was a manual
- * pre-commit check before; it is a gate now, because step 5.1 showed how easily
+ * pre-commit check before; it is a gate now, because PL-OP-FX-01 showed how easily
  * a stale artifact outlives the inspection that was supposed to cover it.
  */
 const LOCAL_PATHS = ['C:\\Users', 'C:/Users', 'star_fox', 'deepseek-harness-pet-main', 'file:///']

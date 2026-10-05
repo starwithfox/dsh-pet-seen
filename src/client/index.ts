@@ -19,13 +19,13 @@
  *    report cannot be refused for a lease that the page simply had not renewed
  *    yet.
  * 4. Reports *which* read named that session on every one of those reports,
- *    including the `-1` reading where none did. That is the drift self-check of
- *    `FIX-DESIGN` §5.5: the same condition that silently broke notice retraction
+ *    including the `-1` reading where none did. That is the drift self-check
+ *    (PL-EN-NW-06): the same condition that silently broke notice retraction
  *    on 0.2.0-rc.2 now leaves a trace in `GET /state` within seconds.
- * 5. Reports its **own build identity** on the same reports (step 6.1), so the
+ * 5. Reports its **own build identity** on the same reports (PL-EN-NW-02), so the
  *    host can publish "what I am" next to "what the page says it is" and a
  *    half-refreshed install — a new host with an old page, or the reverse — is
- *    visible instead of silent. See `HANDOVER-STEP5.1` §6.
+ *    visible instead of silent.
  *
  * Every decision it makes is in `decide.ts`; this file is only the wiring.
  *
@@ -221,7 +221,7 @@ export function apply(ctx: ClientContext): void {
   /**
    * Bumped whenever the current session actually changes.
    *
-   * This is the invariant of `FIX-DESIGN` §5.1.4: a switch invalidates every
+   * This is the generation invariant (PL-EN-NW-06): a switch invalidates every
    * previous observation immediately. An async result that was launched for the
    * old session must therefore not be allowed to write state when it lands, and
    * comparing this counter is what makes that true. Following the source below
@@ -273,7 +273,7 @@ export function apply(ctx: ClientContext): void {
   }
 
   /**
-   * The drift self-check fields (`FIX-DESIGN` §5.5) that ride with every report.
+   * The drift self-check fields (PL-EN-NW-06) that ride with every report.
    *
    * `reader` is already known from the snapshot the caller took; the other two
    * cost one extra `sessions.list` read, which is a rounding error next to the
@@ -392,7 +392,7 @@ export function apply(ctx: ClientContext): void {
       focused: document.hasFocus(),
       title: resolved.title,
       ...readDiagnostics(resolved),
-      // The other end of the build handshake (step 6.1): the host holds its own
+      // The other end of the build handshake (PL-EN-NW-02): the host holds its own
       // identity next to this one, so "host new / page old" and its reverse stop
       // being invisible. Deliberately outside `readDiagnostics()`, which is about
       // the session-read chain; this is about which build is running at all.
@@ -431,7 +431,7 @@ export function apply(ctx: ClientContext): void {
       )
       if (!response.ok) return
       const payload = await response.json() as NoticesPayload
-      // The invariant (FIX-DESIGN §5.1.4): a response is only good while nothing
+      // The generation invariant (PL-EN-NW-06): a response is only good while nothing
       // moved. The generation catches a switch this page already noticed (by
       // subscription, event or timer); re-reading the source catches the one
       // that happened while this request was in flight and that no event has
@@ -524,7 +524,6 @@ export function apply(ctx: ClientContext): void {
     // the same answer for a switch that somehow arrived without one. Kept on
     // record as not being pinned by a failing case, and kept anyway: the measured
     // cost is one snapshot read per settled notice, far below the POST it follows.
-    // See the "性能实测" section of `working-docs/IMPL-LOG-SESSION-CURRENT.md`.
     if (disposed || gen !== generation || currentSessionId !== sessionId) return
     const afterPost = snapshot()
     if (disposed || afterPost.sessionId !== sessionId) {

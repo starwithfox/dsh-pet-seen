@@ -120,8 +120,8 @@ export function splitCookie(cookie) {
  * Resolve the URL that serves the pet plugin's own client bundle, from an app shell.
  *
  * Two shapes in the shell carry the plugin roster, and on the 0.2.0-rc.2 desktop shell they
- * disagree in *both* shape and `rev` (measured 2026-09-30; `working-docs/
- * DESKTOP-PROBE-2026-09-30.md` §5):
+ * disagree in *both* shape and `rev` (measured 2026-09-30; the boot-payload
+ * false red, PL-EN-FX-02):
  *
  *   boot JSON roster    {"id":"dsh-pet-seen","url":"plugins/??dsh-pet-seen/client.js&rev=…",…}
  *                       → the plugin stands alone, so this URL serves its own bundle

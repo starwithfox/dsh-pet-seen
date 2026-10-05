@@ -1,13 +1,14 @@
 /**
  * The build identity shared by both halves of the plugin.
  *
- * **Why this exists** (`HANDOVER-STEP5.1` §6, step 6.1). The plugin ships *two*
+ * **Why this exists** (the build handshake, PL-EN-NW-02). The plugin ships *two*
  * artifacts that load independently: `lib/index.js` (host half — only swapped by
  * restarting the host) and `client/client.js` (page half — reloaded with the
  * page). Nothing tied them together, so a half-refreshed install produced a
  * **silent mixture**. That is not hypothetical: on 2026-10-02 the `web` profile
- * ran a step-5 host half next to a step-4.2 client half, and every gate stayed
- * green while the drift self-check installed in step 5 was dead. One step
+ * ran a host half that had the drift self-check next to a client half that
+ * predated it, and every gate stayed
+ * green while that self-check (PL-EN-NW-06) was dead. One step
  * further (a host that sends a field the old client does not, or a client that
  * calls a route the old host does not have) is the original bug of this round:
  * no `/notices` request at all, no popup retraction, and a healthy-looking host.
@@ -26,7 +27,7 @@
  * - a commit id misses a dirty worktree build, and `npm pack` / registry
  *   builds have no `.git` at all;
  * - a content hash also catches the *documented* shape "`link:` + rebuilt but
- *   host not restarted" (`STATUS` §4 item 20), where both halves share one
+ *   host not restarted" (IS-001), where both halves share one
  *   commit and one version number.
  *
  * The value is deterministic: identical sources and version produce an

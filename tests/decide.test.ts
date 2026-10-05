@@ -7,7 +7,7 @@
  * retryable rather than as a lifetime ban (D4), and accepting the host's dwell
  * threshold (D5). The session-current chain is here for the same reason — which
  * read answers is a pure decision, and it is the one 0.2.0 moved — and so are
- * the two values derived from it for the drift self-check (`FIX-DESIGN` §5.5).
+ * the two values derived from it for the drift self-check (PL-EN-NW-06).
  */
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
@@ -358,11 +358,10 @@ describe('session current: which source to follow', () => {
  * The other two fields of the drift self-check.
  *
  * `reader` is asserted in every chain case above; these are what travel with it
- * (`FIX-DESIGN` §5.5). `byIdCount` is what tells "no session exists yet" apart
+ * (the drift self-check, PL-EN-NW-06). `byIdCount` is what tells "no session exists yet" apart
  * from "sessions exist and none of the four reads names one" — the two readings
  * `reader === -1` cannot distinguish on its own — and `readerReason` is what
- * makes a `/state` snapshot or a probe line readable without keeping §5.2's
- * table open.
+ * makes a `/state` snapshot or a probe line readable on its own.
  * -------------------------------------------------------------------------- */
 
 describe('session current: the reported diagnostics', () => {

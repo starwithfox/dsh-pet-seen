@@ -1,11 +1,10 @@
 /**
  * Gate C page side: the observation primitives, injected verbatim by
- * `tools/cdp-gate-c.mjs`.
+ * `tools/cdp-acceptance.mjs`.
  *
  * Gate A (see `acceptance-client-page.js`) proves the rule *inside one session*:
  * a reply that is off the band is not observed, and the same reply on the band
- * is. Gate C asks the harder, cross-cutting questions the plan lists in §3.6 and
- * §3.7, all of which need two tabs of the same browser and per-tab focus
+ * is. Gate C asks the harder, cross-cutting questions, all of which need two tabs of the same browser and per-tab focus
  * control:
  *
  *   1. another session — a notice for session B must not be confirmed while the

@@ -4,8 +4,8 @@
  *
  * Drives a **headless Chrome over CDP** so the page-side acceptance in
  * `tools/acceptance-client-page.js` can run without a human pasting anything
- * into a console. Same reasoning as `DELIVERY-ROUND3.md` §10: a hand-executed
- * gate can only ever prove that a person ran it correctly once, and this round
+ * into a console. A hand-executed gate can only ever prove that a person ran it
+ * correctly once, and this round
  * lost three attempts to exactly that class of failure (a stale paste, a wrong
  * scroll by one pixel, and a human losing a race to a 2-second timer).
  *
@@ -454,7 +454,7 @@ async function describeSessions(cdp) {
  * `tab-id` the pet client mints in `apply()`, and at least one `[data-chat-turn]`).
  * Reporting only "never became ready" cannot say which one is missing, so the
  * dump records all three plus the visible text, so the next step is driven by
- * evidence instead of a guessed selector (ROUND 3 §6.2).
+ * evidence instead of a guessed selector.
  *
  * @param cdp - the session to evaluate on.
  * @returns a plain object; `{ error }` when even the dump failed.
@@ -791,7 +791,7 @@ const GATE_C_JUDGE_PATH = join(fileURLToPath(new URL('.', import.meta.url)), 'ga
  * Gate C: the counterexamples that need a second session and a second tab.
  *
  * Gate A (`acceptance-client-page.js`) settles the rule inside one session. What
- * it cannot reach is everything the plan lists in §3.6/§3.7: a notice for
+ * it cannot reach is everything Gate C asks beyond one session: a notice for
  * another session while the user is looking at this one, a visible page whose
  * window is not focused, a notice whose turn is not the one on screen, two
  * unconfirmed notices in the same session, and a popup the user has closed. All
@@ -1924,7 +1924,7 @@ async function main() {
     return failed.length > 0 ? 1 : (unproven.length > 0 ? 2 : 0)
   } catch (error) {
     // A driver failure must be recorded, not swallowed: "did not run" and
-    // "ran and passed" are different results (DELIVERY-ROUND3 §6.1).
+    // "ran and passed" are different results.
     const report = {
       verdict: 'DRIVER-ERROR',
       runnerVersion,

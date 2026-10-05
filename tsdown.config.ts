@@ -17,7 +17,7 @@
  * Both halves are also handed the **build identity** (`tools/build-id.mjs`
  * through `define`): one value for both, derived from the version and every file
  * under `src/`. That is what makes "are the host half and the page half the same
- * build?" answerable by comparing two strings — the handshake added in step 6.1.
+ * build?" answerable by comparing two strings — the build handshake, PL-EN-NW-02.
  * A `define` is used rather than a generated source file so that nothing tracked
  * has to be regenerated, and the build stays deterministic.
  */

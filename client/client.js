@@ -13,10 +13,10 @@ window.__ModuleLoader__.load({
 		* its own copy in `GET /state`, each page reports its own on
 		* `POST /pet-bridge/visibility`, and `tools/probe-http.mjs` fails when either is
 		* missing or when the two disagree — which is how a half-refreshed install
-		* ("host new, page old", or the reverse) stops being silent. See
-		* `HANDOVER-STEP5.1` §6 and `IMPL-LOG` step 6.1.
+		* ("host new, page old", or the reverse) stops being silent. See the build
+		* handshake (PL-EN-NW-02).
 		*/
-		const BUILD_ID = "6cb256fab556cb91";
+		const BUILD_ID = "6c6364f6dcfe36c2";
 		/**
 		* Browser-facing route paths. Each is registered as its own `exact` route so a
 		* method mismatch is answered per path instead of falling through to a shared
@@ -298,7 +298,7 @@ window.__ModuleLoader__.load({
 		* Human-readable name of the read that answered.
 		*
 		* The index is the machine signal; this is what makes a `/state` snapshot or a
-		* probe line readable without keeping §5.2's table open. `-1` names the failure
+		* probe line readable on its own. `-1` names the failure
 		* itself rather than a source, because "all four reads missed" is a fact about
 		* the chain and not about any one read.
 		*
@@ -325,8 +325,8 @@ window.__ModuleLoader__.load({
 		* `resolveCurrentSession()` answers *which* session is current and reports the
 		* hit index; this answers the separate question of *what to subscribe to* for
 		* that hit. Reads 2 and 3 share one source (`sessions.list`) and therefore one
-		* subscription; reads 0 and 1 each name their own observable (`FIX-DESIGN`
-		* §5.2). Nothing here subscribes — observation is the caller's, the same split
+		* subscription; reads 0 and 1 each name their own observable (the read-chain
+		* split, PL-EN-NW-06). Nothing here subscribes — observation is the caller's, the same split
 		* as everywhere else in this module — and nothing throws: an unreachable source,
 		* or a `-1` hit, means "no observable to follow". A missing subscription is
 		* never a correctness problem, only a slower notice of the switch.
@@ -483,8 +483,8 @@ window.__ModuleLoader__.load({
 		* holding, so {@link flowItems} never reaches its `document` fallback, and every
 		* rectangle measured on the dead nodes is 0 — which leaves {@link isTurnVisible}
 		* permanently false and stops `/seen` for the life of the page, with nothing
-		* logged (found in the field on 2026-10-02; see
-		* `working-docs/INVESTIGATION-SEEN-NOT-FIRING-2026-10-02.md` §5.1).
+		* logged (found in the field on 2026-10-02; the trap it leaves behind is
+		* IS-009).
 		*
 		* Re-reading the two nodes per evaluation costs two `querySelector` calls and
 		* keeps {@link VisibilityDeps} a plain value shape, so no consumer changes.
@@ -840,13 +840,13 @@ window.__ModuleLoader__.load({
 		*    report cannot be refused for a lease that the page simply had not renewed
 		*    yet.
 		* 4. Reports *which* read named that session on every one of those reports,
-		*    including the `-1` reading where none did. That is the drift self-check of
-		*    `FIX-DESIGN` §5.5: the same condition that silently broke notice retraction
+		*    including the `-1` reading where none did. That is the drift self-check
+		*    (PL-EN-NW-06): the same condition that silently broke notice retraction
 		*    on 0.2.0-rc.2 now leaves a trace in `GET /state` within seconds.
-		* 5. Reports its **own build identity** on the same reports (step 6.1), so the
+		* 5. Reports its **own build identity** on the same reports (PL-EN-NW-02), so the
 		*    host can publish "what I am" next to "what the page says it is" and a
 		*    half-refreshed install — a new host with an old page, or the reverse — is
-		*    visible instead of silent. See `HANDOVER-STEP5.1` §6.
+		*    visible instead of silent.
 		*
 		* Every decision it makes is in `decide.ts`; this file is only the wiring.
 		*
@@ -977,7 +977,7 @@ window.__ModuleLoader__.load({
 			/**
 			* Bumped whenever the current session actually changes.
 			*
-			* This is the invariant of `FIX-DESIGN` §5.1.4: a switch invalidates every
+			* This is the generation invariant (PL-EN-NW-06): a switch invalidates every
 			* previous observation immediately. An async result that was launched for the
 			* old session must therefore not be allowed to write state when it lands, and
 			* comparing this counter is what makes that true. Following the source below
@@ -1027,7 +1027,7 @@ window.__ModuleLoader__.load({
 				}
 			};
 			/**
-			* The drift self-check fields (`FIX-DESIGN` §5.5) that ride with every report.
+			* The drift self-check fields (PL-EN-NW-06) that ride with every report.
 			*
 			* `reader` is already known from the snapshot the caller took; the other two
 			* cost one extra `sessions.list` read, which is a rounding error next to the

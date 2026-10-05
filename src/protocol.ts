@@ -82,8 +82,8 @@ declare const __PET_PLUGIN_VERSION__: string
  * its own copy in `GET /state`, each page reports its own on
  * `POST /pet-bridge/visibility`, and `tools/probe-http.mjs` fails when either is
  * missing or when the two disagree — which is how a half-refreshed install
- * ("host new, page old", or the reverse) stops being silent. See
- * `HANDOVER-STEP5.1` §6 and `IMPL-LOG` step 6.1.
+ * ("host new, page old", or the reverse) stops being silent. See the build
+ * handshake (PL-EN-NW-02).
  */
 export const BUILD_ID: string =
   typeof __PET_BUILD_ID__ === 'string' && __PET_BUILD_ID__ !== '' ? __PET_BUILD_ID__ : 'unbundled'
@@ -217,7 +217,7 @@ export interface NoticeSnapshot {
  * Which of the client's four session reads answered.
  *
  * The chain itself lives in `src/client/decide.ts`; the index travels to the
- * host as a **drift signal** (the self-check of `FIX-DESIGN` §5.5). `-1` means
+ * host as a **drift signal** (the self-check, PL-EN-NW-06). `-1` means
  * no read answered at all, which is the state the whole self-check exists for:
  * on 0.2.0-rc.2 the same condition silently produced no notice retraction and
  * left no trace anywhere.
@@ -264,11 +264,12 @@ export interface TabDiagnostic {
   /**
    * Build identity that tab's client half reported, or null.
    *
-   * Added in step 6.1. `null` means "this tab never reported one", which is what
+   * Added with the build handshake (PL-EN-NW-02). `null` means "this tab never reported one", which is what
    * an older client half looks like — the same distinction
    * {@link TabDiagnostic.reader} draws for the drift self-check, and the reason
-   * the two are separate concerns: a step-5 client reports a `reader` and no
-   * `buildId`, and one shipped before step 5 reports neither.
+   * the two are separate concerns: a client half that has the drift self-check
+   * (PL-EN-NW-06) but predates the build handshake reports a `reader` and no
+   * `buildId`, and one older than both reports neither.
    */
   readonly buildId: string | null
   /** Epoch ms of that tab's last visibility report. */
@@ -314,7 +315,7 @@ export interface StatePayload {
   /** Whether the browser route half is mounted (the DSH WebServer is present). */
   readonly browserRoutes: boolean
   /**
-   * Identity of the build this host half was compiled from (step 6.1).
+   * Identity of the build this host half was compiled from (PL-EN-NW-02).
    *
    * The other end of the handshake: each page reports its own
    * {@link TabDiagnostic.buildId} on every visibility report, and this is what
@@ -394,7 +395,7 @@ export interface VisibilityRequest {
   /** Optional session title from the client snapshot (host stores it verbatim). */
   readonly title?: string | null
   /**
-   * Which of the client's four reads answered (the drift signal, §5.5).
+   * Which of the client's four reads answered (the drift signal, PL-EN-NW-06).
    *
    * Sent on **every** report, including the ones where no session was found:
    * `-1` is the reading worth keeping. Diagnostics only — nothing here can mark
@@ -407,7 +408,7 @@ export interface VisibilityRequest {
   /** Size of `sessions.list.byId` when the report was made. */
   readonly byIdCount?: number
   /**
-   * Identity of the build this page's client half came from (step 6.1).
+   * Identity of the build this page's client half came from (PL-EN-NW-02).
    *
    * Sent on every report, including the `pagehide` withdrawal, so the host can
    * hold it next to its own {@link BUILD_ID} and a half-refreshed install

@@ -424,7 +424,7 @@ export function byIdCount(source: CurrentSessionSource): number {
  * Human-readable name of the read that answered.
  *
  * The index is the machine signal; this is what makes a `/state` snapshot or a
- * probe line readable without keeping §5.2's table open. `-1` names the failure
+ * probe line readable on its own. `-1` names the failure
  * itself rather than a source, because "all four reads missed" is a fact about
  * the chain and not about any one read.
  *
@@ -455,8 +455,8 @@ function observableOf(value: unknown): ObservableView<unknown> | null {
  * `resolveCurrentSession()` answers *which* session is current and reports the
  * hit index; this answers the separate question of *what to subscribe to* for
  * that hit. Reads 2 and 3 share one source (`sessions.list`) and therefore one
- * subscription; reads 0 and 1 each name their own observable (`FIX-DESIGN`
- * §5.2). Nothing here subscribes — observation is the caller's, the same split
+ * subscription; reads 0 and 1 each name their own observable (the read-chain
+ * split, PL-EN-NW-06). Nothing here subscribes — observation is the caller's, the same split
  * as everywhere else in this module — and nothing throws: an unreachable source,
  * or a `-1` hit, means "no observable to follow". A missing subscription is
  * never a correctness problem, only a slower notice of the switch.

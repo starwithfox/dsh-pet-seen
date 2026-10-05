@@ -223,8 +223,8 @@ export function turnItems(deps: VisibilityDeps, turn: number): ElementLike[] {
  * holding, so {@link flowItems} never reaches its `document` fallback, and every
  * rectangle measured on the dead nodes is 0 — which leaves {@link isTurnVisible}
  * permanently false and stops `/seen` for the life of the page, with nothing
- * logged (found in the field on 2026-10-02; see
- * `working-docs/INVESTIGATION-SEEN-NOT-FIRING-2026-10-02.md` §5.1).
+ * logged (found in the field on 2026-10-02; the trap it leaves behind is
+ * IS-009).
  *
  * Re-reading the two nodes per evaluation costs two `querySelector` calls and
  * keeps {@link VisibilityDeps} a plain value shape, so no consumer changes.

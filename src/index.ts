@@ -244,7 +244,7 @@ export function completionDispatch(kind: TurnEndKind): CompletionDispatch {
     // A fork cuts an unclosed prefix turn. The parent has not finished and the
     // child has not started, so there is nothing to announce: going `idle` is
     // the honest reading, and `interrupted` is reserved for "repaired after a
-    // crash". Nothing pops, which is what the DECISION-FORKED record requires.
+    // crash". Nothing pops (PL-PR-NW-04).
     case 'forked':
     case 'aborted':
     case 'interrupted':
@@ -313,11 +313,11 @@ export function apply(
     notices: store.allNotices(),
     petPort: client.isHandshaken ? client.port : null,
     browserRoutes: browserRoutes !== null,
-    // The drift self-check (`FIX-DESIGN` §5.5). Outside `revision` on purpose:
+    // The drift self-check (PL-EN-NW-06). Outside `revision` on purpose:
     // it is rewritten on every lease refresh, so counting it as a snapshot
     // change would make `revision` churn while nothing real had moved.
     browserTabs: browserRoutes?.diagnostics() ?? [],
-    // The build-identity handshake (step 6.1): what *this* host half was
+    // The build-identity handshake (PL-EN-NW-02): what *this* host half was
     // compiled from, published next to each tab's report of the same fact in
     // `browserTabs`. Both are stated, neither is judged — a reader compares them
     // (`tools/probe-http.mjs` fails on a mismatch), because "the page is stale"

@@ -9,8 +9,7 @@
  * The harness itself *is* stubbed (a fake context replays `session/event` and
  * `agent/status`, and the optional WebServer arrives as a double when a case asks
  * for one), so this half stays verifiable without a running DSH. Wiring the same
- * code to a real DSH is the P0 verification step recorded in
- * DELIVERY-ROUND1.md.
+ * code to a real DSH was the P0 verification step of that round.
  */
 import assert from 'node:assert/strict'
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
@@ -366,7 +365,7 @@ describe('loopback integration', () => {
    * a named session carries the read as a session fact, and a page that named
    * none — the drift case — can only appear in `browserTabs`.
    *
-   * Since step 6.1 the same snapshot carries the build handshake, and this is
+   * Since the build handshake (PL-EN-NW-02) the same snapshot carries it, and this is
    * where the *shape* of the host's answer is pinned: it states its own build
    * and each tab's report of the same fact, and it renders no verdict about
    * them. A host that compared the two and published "stale: true" would hide

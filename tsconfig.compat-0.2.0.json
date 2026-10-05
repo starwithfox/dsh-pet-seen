@@ -8,14 +8,14 @@
  *
  * The desktop installation cannot be used directly: `app.asar` ships no
  * declarations at all (the packer drops every `.d.ts`). The declarations come
- * from the registry instead — see `working-docs/DECISION-FORKED-2026-09-30.md`
- * §2.3 — and the copies under `_scratch/` were verified **byte-identical** to
+ * from the registry instead (IS-005: the asar ships no declarations at all)
+ * — and the copies under `_scratch/` were verified **byte-identical** to
  * the `app.asar` copies:
  *
  *   - `_scratch/dsh-session-0.2.0-rc.2/` — 5/5 of `lib/index.js`,
  *     `lib/types/{fork,repair,types,index}.js`
  *   - `_scratch/dsh-agent-0.2.0-rc.2/` — 11/11 of `lib/**\/*.js`
- *     (step 7 / T6; script `_scratch/compare-dsh-agent-asar.mjs`)
+ *     (verified 2026-09-30; script `_scratch/compare-dsh-agent-asar.mjs`)
  *
  * To repopulate the targets after `_scratch/` is cleared (needs network; the
  * machine's schannel is broken, so the fetch goes through node/OpenSSL):
@@ -35,17 +35,17 @@
  *
  * NOTE: like `tsconfig.check.json`, this file hard-codes this machine's profile
  * path (4 occurrences, on the `@deepseek-ai/*` lines below). P1-E's portability
- * work (`working-docs/PRIORITIES-2026-09-30.md` §3) has to cover it as well.
+ * work (`PL-EN-FX-01`) has to cover it as well.
  *
- * Expected result is **green** since step 7 implemented the `forked` kind. It
+ * Expected result is **green** since the `forked` kind is implemented (PL-PR-NW-04). It
  * was deliberately red before that, with exactly this line:
  *
  *     src/pins.ts(107,3): error TS2344: Type 'boolean' does not satisfy the constraint 'true'.
  *
  * That error WAS the point: `_reasonsCovered` refuses to let a new harness kind
- * degrade to a runtime default. It is still not wired into `npm run check` —
- * see DECISION-FORKED §9 for why (the target lives in a gitignored `_scratch/`,
- * so it cannot be a precondition of the ordinary gate).
+ * degrade to a runtime default. It is still not wired into `npm run check`:
+ * the target lives in a gitignored `_scratch/`,
+ * so it cannot be a precondition of the ordinary gate.
  */
 {
   "extends": "./tsconfig.check.json",

@@ -24,8 +24,8 @@
  *      the wrong row would open an unrelated session and make the acceptance run
  *      look like it reached the conversation while it did not.
  *   4. `rows` honestly lists every sidebar row, including the ones whose id
- *      could not be read — that dump is what ROUND 5 §7 relies on to diagnose
- *      the next failure without spending another approval.
+ *      could not be read — that dump is what lets a later acceptance round
+ *      diagnose the next failure without spending another approval.
  *
  *   The file under test is read from disk and evaluated verbatim (indirect eval,
  *   in global scope with stubbed `window`/`document`), the same discipline

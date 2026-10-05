@@ -11,13 +11,13 @@
  * that, and only while that tab still holds a live focus lease.
  *
  * The same report carries the page's **session-read diagnostics** (`reader` and
- * friends, `FIX-DESIGN` §5.5). They are stored on the lease and surfaced through
+ * friends, the drift self-check, PL-EN-NW-06). They are stored on the lease and surfaced through
  * {@link BrowserRoutes.diagnostics} so a future DSH that moves the current
  * session again is visible in `GET /state` within seconds instead of surfacing
  * as "the popup never goes away".
  *
- * It also carries the page's **build identity** (step 6.1, `HANDOVER-STEP5.1`
- * §6). The host stores it beside its own and publishes both; neither half ever
+ * It also carries the page's **build identity** (the build handshake,
+ * PL-EN-NW-02). The host stores it beside its own and publishes both; neither half ever
  * decides that the other is stale, which is what keeps this a statement of fact
  * rather than a verdict — `tools/probe-http.mjs` is the reader that judges.
  *
@@ -84,7 +84,7 @@ interface Lease {
   /** Epoch ms the lease was last refreshed. */
   at: number
   /**
-   * The drift self-check fields (`FIX-DESIGN` §5.5), last reported by this tab.
+   * The drift self-check fields (PL-EN-NW-06), last reported by this tab.
    *
    * Kept on the lease rather than in a second table because the lease is already
    * one row per tab with a TTL, which is what makes these bounded and

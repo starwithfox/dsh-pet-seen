@@ -19,19 +19,20 @@
  *   3. the host's control plane: the credential file the pet and the CDP driver
  *      read, the `/state` snapshot behind it, and the per-tab session-read
  *      diagnostics that snapshot carries (`browserTabs`). Those diagnostics are
- *      the drift self-check of `FIX-DESIGN` §5.5, and this probe is one of the
+ *      the drift self-check (PL-EN-NW-06), and this probe is one of the
  *      two readers that are supposed to notice.
  *
  * Three readings come out of `browserTabs`, and they mean different things:
  *
  *   - a tab row with **no `reader` field** ⇒ **FAIL**. A tab row is a live
- *     lease, so the page did report; every client half since step 5 sends
- *     `reader` (a `-1` is a *report*, not an omission), and a report that
+ *     lease, so the page did report; a client half that has the drift self-check
+ *     sends `reader` (a `-1` is a *report*, not an omission), and a report that
  *     carries no diagnostics leaves the previous value in place rather than
  *     clearing it. So a row that has never had one means that tab's client half
  *     predates the self-check — a stale install or an unbuilt bundle. That state
  *     used to pass silently, which made "there is no drift" and "this build
- *     cannot see drift" the same output (step 5.1).
+ *     cannot see drift" the same output (the install-staleness round,
+ *     PL-OP-FX-01).
  *   - `reader === -1` with sessions present ⇒ **FAIL**: the client session read
  *     has drifted and notice retraction is blind until it is fixed.
  *   - `reader > 0` ⇒ a warning, not a failure: a fallback read answered. The
@@ -42,7 +43,7 @@
  * the durable reading is `sessions[].reader`, and an empty `browserTabs` is
  * reported as the ambiguity it is rather than as "nothing has reported yet".
  *
- * Since step 6.1 the same snapshot carries the **build handshake**: the host
+ * Since the build handshake (PL-EN-NW-02) the same snapshot carries it: the host
  * publishes its own build identity (`build`) and every tab row carries the
  * identity its client half reported (`browserTabs[].buildId`). Three more
  * judgements come out of that, and they are checked *before* the read ones
@@ -51,11 +52,12 @@
  *
  *   - no `build` on `/state` ⇒ **FAIL**: the host half predates the handshake.
  *   - a live tab row with no `buildId` ⇒ **FAIL**: that client half predates the
- *     handshake (its `reader` is missing too if it also predates step 5).
+ *     handshake (its `reader` is missing too if it also predates the drift
+ *     self-check, PL-EN-NW-06).
  *   - a tab whose `buildId` differs from the host's ⇒ **FAIL**: the two halves
  *     are different builds — a stale `file:` install, an unbuilt bundle, or a
  *     host that was rebuilt and never restarted. This is the state that was
- *     completely silent before step 6.1 (`HANDOVER-STEP5.1` §4.2).
+ *     completely silent before the build handshake (PL-EN-NW-02).
  *
  * Sizes are printed as **bytes** (`Buffer.byteLength`). Until 2026-10-02 this
  * column was `text.length`, i.e. UTF-16 code units: the served pet bundle
@@ -163,8 +165,8 @@ function reportState(state, status, origin) {
 
   /*
    * The host's own build identity. `null` means the field is absent, which is
-   * not the same as "unknown": a host half from before step 6.1 does not have
-   * it, and that is itself the finding.
+   * not the same as "unknown": a host half from before the build handshake
+   * (PL-EN-NW-02) does not have it, and that is itself the finding.
    */
   const hostBuild = typeof state?.buildId === 'string' && state.buildId !== '' ? state.buildId : null
 
@@ -190,7 +192,7 @@ function reportState(state, status, origin) {
     console.log(`  tab ${shortId(tab.tabId)} reader=${tab.reader ?? '-'} (${tab.readerReason ?? '-'})`
       + ` byId=${tab.byIdCount ?? '-'} session="${shortId(tab.sessionId)}" build=${noBuild ? '-' : tab.buildId}`
       + (noBuild ? '  !! no build id: this tab\'s client half predates the handshake' : '')
-      + (absence ? '  !! no self-check field: this tab\'s client half predates step 5' : '')
+      + (absence ? '  !! no self-check field: this tab\'s client half predates the drift self-check' : '')
       + (mixed ? `  !! MIXED: this tab runs a different build than the host (${hostBuild})` : ''))
   }
   const degraded = tabs.filter((tab) => typeof tab.reader === 'number' && tab.reader > 0)
@@ -211,21 +213,22 @@ function reportState(state, status, origin) {
    * The build handshake, judged before the drift self-check and for the same
    * reason that one was added: when the two halves come from different builds,
    * a missing or contradictory `reader` is a *symptom*, and naming the mixture
-   * is the finding. Before step 6.1 this whole state was silent — a `file:`
-   * install ran a step-5 host next to a step-4.2 client half and every gate
-   * stayed green while the self-check was dead (`HANDOVER-STEP5.1` §4.2).
+   * is the finding. Before the build handshake (PL-EN-NW-02) this whole state
+   * was silent — a `file:` install ran a host half that had the drift self-check
+   * next to a client half that predated it, and every gate
+   * stayed green while the self-check (PL-EN-NW-06) was dead.
    */
   if (hostBuild === null) {
     return 'GET /state carries no `buildId`: this host half predates the build handshake, so "the two'
       + ' halves agree" and "nothing can tell whether they agree" are the same output here — reinstall or'
-      + ' rebuild the plugin and restart the host (step 6.1)'
+      + ' rebuild the plugin and restart the host'
   }
   const withoutBuild = tabs.filter((tab) => typeof tab.buildId !== 'string' || tab.buildId === '')
   if (withoutBuild.length > 0) {
     const alsoNoReader = withoutBuild.some((tab) => typeof tab.reader !== 'number')
     return `${withoutBuild.length} browser tab(s) hold a live lease but report no \`buildId\`: that tab's`
-      + ' client half is older than the build handshake (step 6.1)'
-      + (alsoNoReader ? ', and older than the step-5 drift self-check as well' : '')
+      + ' client half is older than the build handshake'
+      + (alsoNoReader ? ', and older than the drift self-check as well' : '')
       + ' — reinstall/rebuild the plugin and reload the page'
   }
   const mixed = tabs.filter((tab) => tab.buildId !== hostBuild)
@@ -233,19 +236,19 @@ function reportState(state, status, origin) {
     return `${mixed.length} browser tab(s) report build ${mixed[0].buildId} while the host runs`
       + ` ${hostBuild}: the two halves are not the same build. The client half is stale (a \`file:\` install`
       + ' that was not refreshed, or a bundle that was never rebuilt), or the host was rebuilt and not'
-      + ' restarted — `link:` reads the worktree but does not hot-reload the host half (STATUS §4 item 20)'
+      + ' restarted — `link:` reads the worktree but does not hot-reload the host half'
   }
   const withoutSelfCheck = tabs.filter((tab) => typeof tab.reader !== 'number')
   if (withoutSelfCheck.length > 0) {
     return `${withoutSelfCheck.length} browser tab(s) hold a live lease but report no \`reader\`: that tab's`
       + ' client half is older than the drift self-check, so "no drift" and "cannot see drift" are the same'
-      + ' output here — reinstall/rebuild the plugin and restart the host (step 5.1)'
+      + ' output here — reinstall/rebuild the plugin and restart the host'
   }
   const blind = tabs.filter((tab) => tab.reader === -1 && (tab.byIdCount ?? 0) > 0)
   if (blind.length > 0) {
     return `${blind.length} browser tab(s) can see sessions (byId=${blind[0].byIdCount}) but none of the`
       + ' four reads names the current one: the client session read has drifted, and notice retraction'
-      + ' is blind until it is fixed (see FIX-DESIGN §5.5)'
+      + ' is blind until it is fixed'
   }
   return null
 }

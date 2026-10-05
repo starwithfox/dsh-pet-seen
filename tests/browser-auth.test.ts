@@ -3,7 +3,7 @@
  * Smoke test for `tools/browser-auth.mjs#resolvePetClientUrl`.
  *
  * The fixtures are the *real* shapes the 0.2.0-rc.2 desktop shell emitted on 2026-09-30
- * (`working-docs/DESKTOP-PROBE-2026-09-30.md` §5). They are kept verbatim — including the
+ * (the boot-payload false red, PL-EN-FX-02). They are kept verbatim — including the
  * `&amp;` escaping and the 65-package tail — because the bug this pins was invisible against a
  * simplified fixture: a position-free `plugins/??…` scan swallowed the whole shared group and
  * produced a URL whose `rev` is scoped to that group. Fetching a group rev for a single-file

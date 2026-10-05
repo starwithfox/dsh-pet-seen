@@ -3,14 +3,14 @@
  * and the session facts those diagnostics feed.
  *
  * `mountBrowserRoutes()` is the only place a page's report is validated, and
- * until the drift self-check (`FIX-DESIGN` §5.5) it had no direct coverage at
+ * until the drift self-check (PL-EN-NW-06) it had no direct coverage at
  * all. The integration suite cannot cover it: that suite deliberately runs the
  * *headless* shape, where `inject(['webServer'])` never resolves and the routes
  * are never mounted (see its "headless shape has no browser routes" case).
  *
  * The endpoint carries two independent diagnostics and both are pinned here: the
  * session-read self-check (`reader` and friends) and the **build identity** the
- * page reports (step 6.1). They are read on separate rules on purpose — the read
+ * page reports (PL-EN-NW-02). They are read on separate rules on purpose — the read
  * fields are taken as a unit keyed on the read index, the build identity stands
  * alone — so a case that conflates them would hide the difference.
  *

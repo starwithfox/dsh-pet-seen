@@ -430,7 +430,7 @@ describe('client wiring: recovering from a refusal', () => {
 })
 
 /**
- * The invariant of `FIX-DESIGN` §5.1.4 — a switch invalidates everything that
+ * The generation invariant (PL-EN-NW-06) — a switch invalidates everything that
  * was observed for the session the user left — plus the subscription that only
  * narrows the window in which a switch is *noticed*.
  *
@@ -773,10 +773,10 @@ describe('client wiring: leaving a session mid-flight', () => {
  * pinned here is that they actually leave the page, on the report the host reads
  * them from, and that the two readings `reader === -1` can mean are told apart
  * by `byIdCount`: an empty app, or a page looking at sessions it cannot name.
- * The second one is the drift signal (`FIX-DESIGN` §5.5), and it used to leave
+ * The second one is the drift signal (PL-EN-NW-06), and it used to leave
  * no trace anywhere.
  *
- * The build identity joined them in step 6.1 and is pinned here for the same
+ * The build identity joined them in the build handshake (PL-EN-NW-02) and is pinned here for the same
  * reason: it is only worth anything if it actually leaves the page, and it has
  * to leave on *both* body shapes — the polled report and the hand-written
  * `pagehide` withdrawal — or the host reads the withdrawal as a client from

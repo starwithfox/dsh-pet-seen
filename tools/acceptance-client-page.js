@@ -9,7 +9,7 @@
  * diagnostics only), because a test that re-implements the rule would pass
  * whenever the copy was wrong in the same way as the code.
  *
- * Checks it runs, mapped to `PLAN-ROUND2.md` §3:
+ * Checks it runs, grouped by acceptance area:
  *
  * - **A0 selectors** — the upstream DOM contract still holds: `[data-chat-flow]`,
  *   `[data-conversation-scroll]`, and `data-chat-flow-kind` on the same element
@@ -903,8 +903,8 @@
     + ` group=${String(negative.groupKind)} hasFocus=${document.hasFocus()}`)
 
   /*
-   * What the plan actually asks for is a *specific* geometry: some other row of
-   * the same turn is on screen while the reply is not (PLAN-ROUND2 §3.1: "只有
+   * What the acceptance plan actually asks for is a *specific* geometry: some other row of
+   * the same turn is on screen while the reply is not ("只有
    * turn 头部或其他行可见、正文未出现时不应取消"). Two weaker situations must
    * never be reported as PASS:
    *

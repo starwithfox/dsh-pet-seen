@@ -12,7 +12,7 @@
  *     without ever printing the token.
  *   - every browser tab's session-read diagnostic, so "which of the four reads
  *     named the session" can be quoted the same way. This is one of the two
- *     readers of the drift self-check (`FIX-DESIGN` §5.5); `probe-http.mjs` is
+ *     readers of the drift self-check (PL-EN-NW-06); `probe-http.mjs` is
  *     the other, and it is the one that turns drift into a failing exit code.
  *     These rows are *live* — each expires with its tab's lease, and the page
  *     renews that lease only while it is visible and focused — so unlike
@@ -21,17 +21,18 @@
  *
  *     A row that exists but carries **no `reader` field** is a different thing
  *     and is marked `STALE`: the tab is alive enough to hold a lease, yet its
- *     client half never reported the self-check, so it predates step 5 (a stale
- *     install or an unbuilt bundle — see `IMPL-LOG` step 5.1). `DRIFT` is the
+ *     client half never reported the self-check, so it predates that field
+ *     (PL-EN-NW-06) — a stale install or an unbuilt bundle, the mixture
+ *     PL-OP-FX-01 is about. `DRIFT` is the
  *     other non-zero reading: sessions are visible but none is named.
  *
- *   - the **build handshake** added in step 6.1: the host states which build it
+ *   - the **build handshake** added by PL-EN-NW-02: the host states which build it
  *     is (`pluginVersion` / `buildId` on the header line) and every tab states
  *     which build its client half is (per-row `build`). A row whose id differs
  *     from the host's is marked `MIXED`, and one that carries no id at all is
  *     marked `OLD`. Both mean the two halves did not come from one build — the
  *     state that used to be indistinguishable from a healthy install while the
- *     drift self-check was silently dead (`HANDOVER-STEP5.1` §4.2). As with
+ *     drift self-check (PL-EN-NW-06) was silently dead. As with
  *     `STALE`/`DRIFT`, this tool only reports; `probe-http.mjs` is the one that
  *     turns any of them into a failing exit code.
  *
