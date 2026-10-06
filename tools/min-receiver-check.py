@@ -226,6 +226,7 @@ def main() -> int:
     os.makedirs(TMP, exist_ok=True)
     hs_path = os.path.join(TMP, "pet-bridge.json")
     log_path = os.path.join(TMP, "receiver.log")
+    panel_path = os.path.join(TMP, "panel.log")   # 接收端自己写的那份（--log）
 
     host = FakeHost()
     srv = ThreadingHTTPServer(("127.0.0.1", HOST_PORT), make_host_handler(host))
@@ -246,7 +247,8 @@ def main() -> int:
     logf = open(log_path, "w", encoding="utf-8")
     proc = subprocess.Popen(
         [sys.executable, os.path.join(HERE, "min-receiver.py"), "--port", "0",
-         "--handshake-file", hs_path, "--align-interval", "1", "--no-stdin", "--debug"],
+         "--handshake-file", hs_path, "--align-interval", "1", "--no-stdin", "--debug",
+         "--log", panel_path],
         cwd=HERE, stdout=logf, stderr=subprocess.STDOUT,
     )
     print(f"[selftest] min-receiver.py pid={proc.pid}，自测端口 0（系统分配）+ 握手文件 {hs_path}")
@@ -437,6 +439,13 @@ def main() -> int:
         check("控制台有可读的提示面板（有 [screen] 行）", "[screen] popups=" in log)
         check("面板里出现过具体提示文案（上屏语义成立）", "任务完成" in log and "token 上限" in log)
         check("面板里出现过「运行结束」中性文案", "运行结束" in log)
+
+        # ---- 12. 接收端自己写的日志（--log）：中文必须是干净 UTF-8（PL-TS-NW-03 T3）
+        with open(panel_path, "r", encoding="utf-8", errors="replace") as f:
+            panel = f.read()
+        check("--log 给出的文件由接收端自己写了面板", "[screen] popups=" in panel)
+        check("--log 文件里的中文是干净 UTF-8（没有 shell 夹在中间解码）",
+              "本机接收端口" in panel and "\ufffd" not in panel, panel[:120])
 
     finally:
         proc.terminate()

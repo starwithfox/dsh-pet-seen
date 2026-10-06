@@ -25,11 +25,13 @@ dsh-pet-seen "blind receiver" —— 仅凭一份协议文档实现的接收端�
 # 本文件是 PL-TS-NW-03 判据 ① 的交付物，由 ⑤「盲测读者」写出的版本**派生**而来：
 #   * 冻结原件（逐字保留，作为 ⑤ 的证据，不许改）：
 #       working-docs/misc/PL-TS-NW-03-blind-receiver-2026-10-06/receiver.py
-#   * 相对原件的**唯一**改动：两个协议外只读路由（`GET /health`、`GET /__debug/state`）
-#     改成只在显式 `--debug` 时挂载。缺省配置下入站端点只有 `POST /event` 一个，
-#     与 README 协议一节那句「要实现的入站端点只有一个」一致；`--debug` 是验收
-#     （T3/T4 抓线上真实字节）用的仪器，宿主永远不调它。
-#   * 其余逐字未动 —— 包括所有 `GUESS:` 注释与它们的理由。
+#   * 相对原件的改动（只有两处，其余逐字未动 —— 包括所有 `GUESS:` 注释与它们的理由）：
+#     1) T2：两个协议外只读路由（`GET /health`、`GET /__debug/state`）改成只在显式
+#        `--debug` 时挂载 ⇒ 缺省配置下入站端点只有 `POST /event` 一个，与 README 协议
+#        一节那句「要实现的入站端点只有一个」一致；`--debug` 是 T3/T4 抓线上真实字节
+#        用的仪器，宿主永远不调它。
+#     2) T3：加 `--log <路径>`，由**本进程**以 UTF-8 落一份面板日志。理由见 `_Tee`：
+#        真机上用 shell 的 `Tee-Object` 会把面板中文解成乱码，并**不可逆地**写进文件。
 #
 # 依赖面纪律（判据 ① 的本体）：不 import 本仓 `src/` / `lib/` / `client/` 的任何模块，
 # 不读 `~/.dsh/sessions/**`。只用 Python 标准库。
@@ -788,6 +790,47 @@ def stdin_loop(store: Store):
             store.render()
 
 
+# ---------------------------------------------------------------- 日志落盘（PL-TS-NW-03 T3）
+
+class _Tee:
+    """把 stdout 同时写进一个由**本进程**打开的 UTF-8 日志文件。
+
+    为什么不用 shell 的 redirect（`python … | Tee-Object -FilePath …`）：Windows 上
+    PowerShell 用 `[Console]::OutputEncoding`（中文机器上是 CP936）去解码子进程管道的
+    字节，而这个接收端按 UTF-8 写面板 ⇒ 中文被解成乱码，替换字符还会**不可逆地**
+    落进日志文件（2026-10-06 真机上就是这么毁掉一份 T3 日志的）。
+
+    日志文件必须由接收端自己写，编码才由自己说了算 —— 跨仓 `pet.py` 出于同样的理由
+    也要自己落盘（`pythonw` 连控制台都没有）。
+    """
+
+    def __init__(self, stream, path: str):
+        self._stream = stream
+        self._file = open(path, "a", encoding="utf-8", newline="\n")
+
+    def write(self, text: str):
+        self._stream.write(text)
+        self._file.write(text)
+
+    def flush(self):
+        try:
+            self._stream.flush()
+        finally:
+            self._file.flush()
+
+    def isatty(self) -> bool:
+        return self._stream.isatty()
+
+    def fileno(self):
+        return self._stream.fileno()
+
+    def close(self):
+        try:
+            self._file.close()
+        except Exception:
+            pass
+
+
 # ---------------------------------------------------------------- main
 
 def main(argv=None) -> int:
@@ -802,12 +845,24 @@ def main(argv=None) -> int:
     ap.add_argument("--no-stdin", action="store_true", help="别起 stdin 命令线程")
     ap.add_argument("--debug", action="store_true",
                     help="挂上协议外的只读路由 /health 与 /__debug/state（验收/排障用，宿主从不调用）")
+    ap.add_argument("--log", default=None,
+                    help="把面板与日志同时写进这个文件（接收端自己写 UTF-8；别用 shell 的 Tee，见 _Tee 的说明）")
     args = ap.parse_args(argv)
 
     try:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")   # 免得中文在 GBK 控制台上炸
     except Exception:
         pass
+
+    if args.log:
+        # 由接收端自己落盘，而不是让 PowerShell 去 redirect：见 _Tee 的文档字符串。
+        directory = os.path.dirname(os.path.abspath(args.log))
+        try:
+            os.makedirs(directory, exist_ok=True)
+            sys.stdout = _Tee(sys.stdout, args.log)
+        except OSError as e:
+            sys.stderr.write(f"[fatal] 打不开日志文件 {args.log}：{e}\n")
+            return 2
 
     store = Store(args.handshake_file)
     try:
