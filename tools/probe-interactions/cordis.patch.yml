@@ -1,0 +1,17 @@
+# ---------------------------------------------------------------------------
+# dsh-petseen probe bundle patch (PL-PR-IV-05)
+# ---------------------------------------------------------------------------
+# Same shape as the plugin's own patch: a top-level YAML array of loader patch
+# entries, `name` resolved through the profile's node_modules, `id` unique in
+# the profile. No `config`: the probe reads no configuration.
+#
+# Install into whichever profile is under test, restart the host, then remove it
+# again (a probe left installed is a permanent second listener):
+#   dsh plugin add    --profile web link:<repository root>/tools/probe-interactions
+#   dsh plugin remove --profile web dsh-petseen-probe
+#
+# `dsh plugin remove` does not clean node_modules; the judgement is
+# `dsh.profile.bundles`, not the leftover junction.
+- insert:
+    - id: dsh-petseen-probe
+      name: dsh-petseen-probe

@@ -1,0 +1,26 @@
+{
+  "name": "dsh-petseen-probe",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Throwaway host-side probe: are DSH's pending-interaction waterfalls observable from a root-mounted plugin? (PL-PR-IV-05)",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.2"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/cordis": {
+      "optional": true
+    }
+  }
+}
