@@ -69,6 +69,7 @@
     "check:artifacts": "git diff --exit-code HEAD -- lib client",
     "check": "npm run typecheck && npm run build && npm run smoke:bundle && npm run check:artifacts && npm test",
     "mock-pet": "node tools/mock-pet.mjs",
+    "wire:check": "node tools/validate-bridge-wire.mjs",
     "receiver:check": "python tools/min-receiver-check.py"
   },
   "peerDependencies": {
