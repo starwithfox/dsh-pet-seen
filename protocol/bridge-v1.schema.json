@@ -9,7 +9,8 @@
       "path": "/event",
       "direction": "host -> pet",
       "body": "#/$defs/PetEvent",
-      "note": "The only inbound endpoint the pet must implement."
+      "response": "#/$defs/PetEventResponse",
+      "note": "The only inbound endpoint the pet must implement. The host reads only the status code: an answer outside 2xx counts as not delivered and leaves the notice pending (IS-066), which is why a duplicate id is answered 200 rather than 409."
     },
     {
       "method": "POST",
@@ -167,6 +168,33 @@
         "noticeId": {
           "type": "string",
           "description": "Present on every notice-bearing event; the pet keys its popup on it. A result event is 'has noticeId', never 'is named error'."
+        }
+      },
+      "additionalProperties": true
+    },
+    "PetEventResponse": {
+      "title": "PetEventResponse",
+      "description": "POST /event response, pet to host. The host reads only the status code: 2xx means the event was taken, including a duplicate id, and anything else means it was not delivered and the notice stays pending (IS-066). ok, duplicate and reason exist for logs and humans; the host parses this body and ignores it. Only an answer the receiver can never process (unreadable body, missing id, over the 64 KiB limit) is a 4xx.",
+      "type": "object",
+      "required": [
+        "v",
+        "ok"
+      ],
+      "properties": {
+        "v": {
+          "const": 1
+        },
+        "ok": {
+          "type": "boolean",
+          "description": "True when the receiver took the event; a rejected body answers 4xx with false."
+        },
+        "duplicate": {
+          "const": true,
+          "description": "Present only when this id had already been received. The status code stays 200 on purpose: a non-2xx answer would read as not delivered and reopen the notice."
+        },
+        "reason": {
+          "type": "string",
+          "description": "Machine-readable reason, present when ok is false."
         }
       },
       "additionalProperties": true

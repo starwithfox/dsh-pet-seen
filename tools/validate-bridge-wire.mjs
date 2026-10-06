@@ -12,11 +12,14 @@
  *
  *   - `host -> pet` bytes (`/event`, and the responses to `/hello` `/state` `/ack`)
  *     are produced by `lib/index.js` itself. They are the real sender.
- *   - `pet -> host` bytes (`/hello`, `/ack` requests) are authored by this harness.
- *     They prove the schema describes what a receiver *must* send and that the host
- *     accepts it; they are **not** an independent implementation's bytes. The real
- *     independent implementation's bytes were exercised live in T3 (see
- *     `working-docs/HANDOFF-PL-TS-NW-03.md` §9).
+ *   - `pet -> host` bytes (`/event`'s response, the `/hello` and `/ack` requests)
+ *     are authored by this harness. They prove the schema describes what a
+ *     receiver *must* send and that the host accepts it; they are **not** an
+ *     independent implementation's bytes. The real independent implementation's
+ *     bytes were exercised live in T3 (see
+ *     `working-docs/HANDOFF-PL-TS-NW-03.md` §9), and `/event`'s response is
+ *     additionally locked against `tools/min-receiver.py` in
+ *     `tests/negotiation.test.ts` (PL-PR-NW-07).
  *
  * Usage: npm run wire:check
  *
@@ -41,10 +44,12 @@ const schema = JSON.parse(readFileSync(SCHEMA_PATH, 'utf8'))
  * An exemption must be **explicit and must not go stale**: a message that is not
  * on this list fails the run, and an entry whose message has since been given a
  * `$defs` also fails the run (the same rule the docs gate uses for references).
+ *
+ * Empty since PL-PR-NW-07: `/event`'s response was the last known gap (IS-066)
+ * and now has `$defs/PetEventResponse`. The mechanism stays — the next uncovered
+ * message has to be named here, with the code that owns it.
  */
-const UNCOVERED_ALLOWLIST = new Map([
-  ['/event response', 'IS-066 / PL-PR-NW-07'],
-])
+const UNCOVERED_ALLOWLIST = new Map([])
 
 /* ------------------------------------------------------------ the validator */
 
@@ -237,7 +242,7 @@ const petServer = createServer((req, res) => {
     }
     captured.push({ label: '/event request', direction: 'host -> pet', def: 'PetEvent', raw })
     const reply = JSON.stringify({ v: PROTOCOL_VERSION, ok: true })
-    captured.push({ label: '/event response', direction: 'pet -> host', def: null, raw: reply })
+    captured.push({ label: '/event response', direction: 'pet -> host', def: 'PetEventResponse', raw: reply })
     res.writeHead(200, { 'content-type': 'application/json' })
     res.end(reply)
   })

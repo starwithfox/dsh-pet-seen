@@ -45,11 +45,16 @@ interface SchemaDef {
   readonly properties?: Record<string, unknown>
   readonly required?: readonly string[]
   readonly enum?: readonly unknown[]
+  readonly additionalProperties?: unknown
 }
 
 interface Schema {
   readonly $defs: Record<string, SchemaDef>
-  readonly 'x-endpoints': readonly { readonly path: string, readonly note?: string }[]
+  readonly 'x-endpoints': readonly {
+    readonly path: string
+    readonly note?: string
+    readonly response?: string
+  }[]
 }
 
 const schema = JSON.parse(
@@ -229,6 +234,80 @@ describe('published schema ⇄ src/protocol.ts drift lock (PL-PR-NW-02)', () => 
     assert.ok(match !== null, 'tools/mock-pet.mjs must declare a CAPABILITIES list')
     const declared = [...(match[1] ?? '').matchAll(/'([^']+)'/g)].map((entry) => entry[1])
     assert.deepEqual(declared, [...BRIDGE_CAPABILITIES])
+  })
+})
+
+/** The `/event` response: the one `pet -> host` message the schema pins (PL-PR-NW-07). */
+const PET_EVENT_RESPONSE_FIELDS = ['v', 'ok', 'duplicate', 'reason'] as const
+/** Only these two are always present; `duplicate` and `reason` answer one situation each. */
+const PET_EVENT_RESPONSE_REQUIRED = ['v', 'ok'] as const
+
+/**
+ * The reference receiver, read as text on purpose.
+ *
+ * `tools/min-receiver.py` is a real second implementation of the pet half (the
+ * one `npm run receiver:check` drives) and it is what answers `POST /event`: the
+ * host reads only the status code, so the receiver's literals are the bytes this
+ * contract describes. Comparing by value keeps the lock honest about which side
+ * it locks — a changed status code there, or the schema, or the README table
+ * alone turns one of these red.
+ */
+function referenceReceiverSource(): string {
+  return readFileSync(new URL('../../tools/min-receiver.py', import.meta.url), 'utf8')
+}
+
+/** The `### 4.1` section of the README, which is what a receiver implementer reads. */
+function petEventSection(): string {
+  const readme = readFileSync(new URL('../../README.md', import.meta.url), 'utf8')
+  const start = readme.indexOf('### 4.1 ')
+  const end = readme.indexOf('### 4.2 ')
+  assert.ok(start !== -1 && end > start, 'README must keep its 4.1 / 4.2 section headings')
+  return readme.slice(start, end)
+}
+
+describe('/event response contract (PL-PR-NW-07)', () => {
+  it('publishes the answer a pet implements, referenced from the /event endpoint', () => {
+    const endpoint = schema['x-endpoints'].find((entry) => entry.path === '/event')
+    assert.equal(endpoint?.response, '#/$defs/PetEventResponse')
+    const def = schema.$defs.PetEventResponse
+    assert.ok(def !== undefined, '$defs/PetEventResponse must exist')
+    const properties = propertiesOf('PetEventResponse') as Record<
+      string,
+      { readonly const?: unknown, readonly type?: unknown }
+    >
+    assert.deepEqual(Object.keys(properties).sort(), [...PET_EVENT_RESPONSE_FIELDS].sort())
+    assert.deepEqual(def.required, [...PET_EVENT_RESPONSE_REQUIRED])
+    // Compatibility rule (4): a receiver may add a field without asking.
+    assert.equal(def.additionalProperties, true)
+    assert.equal(properties.v?.const, 1)
+    assert.equal(properties.ok?.type, 'boolean', 'ok is a boolean: a 4xx body answers false')
+    assert.equal(properties.duplicate?.const, true, 'duplicate is only ever the literal true')
+    assert.equal(properties.reason?.type, 'string')
+  })
+
+  it('quotes the reference receiver’s real answers, status code and all', () => {
+    const source = referenceReceiverSource()
+    for (const literal of [
+      'return 200, {"v": 1, "ok": True}',
+      'return 200, {"v": 1, "ok": True, "duplicate": True}',
+      'return 400, {"v": 1, "ok": False, "reason":',
+      'self._send(413, {"v": 1, "ok": False, "reason": "body too large"})',
+    ]) {
+      assert.ok(source.includes(literal), `tools/min-receiver.py must still answer ${literal}`)
+    }
+    // The rule a blind reader gets wrong: a duplicate is not a conflict.
+    assert.equal(
+      /return\s+(?!200)\d{3}[^\n]*duplicate/.test(source),
+      false,
+      'a duplicate id must never be answered with a non-2xx status',
+    )
+  })
+
+  it('writes the same table where the receiver implementer reads it', () => {
+    const section = petEventSection()
+    for (const marker of ['duplicate', '200', '400', '413', '2xx']) {
+      assert.ok(section.includes(marker), `README §4.1 must state ${marker} for the /event response`)
+    }
   })
 })
 

@@ -185,7 +185,8 @@ const server = createServer((req, res) => {
         log(`unparsable event: ${String(error)}`)
       }
       res.writeHead(200, { 'content-type': 'application/json' })
-      res.end('{"ok":true}')
+      // The /event response vocabulary (PL-PR-NW-07): v and ok, nothing else.
+      res.end('{"v":1,"ok":true}')
     })
     return
   }
