@@ -352,6 +352,8 @@ npm run probe:http      # 探针：web 资产 + 控制面；陈旧半边、两�
 npm run roundtrip       # 离线跑通全链路（不碰运行中的 DSH）
 npm run acceptance      # 真机 CDP 验收（一次只跑一个宿主）
 npm run mock-pet        # 假桌宠：收事件 + 交互 ack（seen/dismiss/state/quit）
+npm run receiver:check  # 最小接收端（tools/min-receiver.py）的 53 项离线检查（要 python；故意不接进 check）
+npm run wire:check      # 抓真 lib/index.js 的线上字节，逐条过 protocol/bridge-v1.schema.json（故意不接进 check）
 npm run compat:0.2.0    # 对着 0.2.0-rc.2 的声明再查一遍（要联网，故意不接进 check；见 §5.2）
 npm run check           # typecheck → build → smoke:bundle → check:artifacts → test（唯一闸门）
 ```
@@ -429,7 +431,9 @@ CI 上**没有 DSH 安装**，所以类型检查只能对着仓库自己 `devDep
 │   ├── routes.ts         # /pet-bridge/* + 焦点租约
 │   └── client/           # 浏览器侧：index.ts（租约、查询、上报）+ visibility.ts（L1/L2/L3）
 ├── tests/                # 单测 / 集成（真 loopback）/ 负向类型 / L1-L3
-└── tools/                # build-id、mock-pet、roundtrip、smoke-bundle、probe-http、CDP 验收驱动
+└── tools/                # build-id、mock-pet、roundtrip、smoke-bundle、probe-http、CDP 验收驱动、
+                          #   min-receiver（第二个接收端：只按协议一节 + schema 写成）、
+                          #   validate-bridge-wire（它抓的线上字节逐条过 schema）
 ```
 
 ## 8. 许可与范围
