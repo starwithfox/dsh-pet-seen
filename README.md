@@ -168,7 +168,16 @@ curl "http://127.0.0.1:3080/pet-bridge/notices?sessionId=<会话 id>"
 
 ## 4. 协议
 
-本节是**你的桌宠唯一需要读的东西**。要实现的入站端点只有一个（`POST /event`），要调的接口三个（`/hello` / `/state` / `/ack`）。
+本节是**契约的正文**：要实现的入站端点只有一个（`POST /event`），要调的接口三个（`/hello` / `/state` / `/ack`），字段、状态机与失败码都在这里。
+
+**但它不是"你的桌宠唯一需要读的东西"** —— 有两件事按"一处一写"留在了本节之外，这里只给去处、不重复：
+
+| 你还缺什么 | 去处 |
+| --- | --- |
+| 你自己的监听端口：默认值多少、握手之后以谁为准、端口在配置里的位置 | [§3 配置](#3-配置) 的 `petPort` 那行 |
+| 装到哪个 profile、`link:` 与 `file:` 的升级语义有何不同 | [§2 安装](#2-安装) |
+
+**契约没有写明、由你自己定**：监听端口被占用怎么办；同一台机器上多个桌宠同时握手怎么收场（`/hello` 是把端口记成**单槽**的，后一次握手覆盖前一次，没有投票或回退规则）。本仓的参考接收端选择的是"监听失败即明确报错退出、不静默换端口，并上报实际 bind 到的端口"—— 那是它的选择，不是协议要求；照你的实现写清楚即可。
 
 ### 4.1 插件 → 桌宠 `POST http://127.0.0.1:<petPort>/event`
 
@@ -227,7 +236,7 @@ curl "http://127.0.0.1:3080/pet-bridge/notices?sessionId=<会话 id>"
 | body 不是 JSON 对象 / 缺 `id` / 不是合法 JSON | 400 | `{ "v": 1, "ok": false, "reason": "…" }` |
 | body 超过 64 KiB（[§4.5](#45-安全)） | 413 | `{ "v": 1, "ok": false, "reason": "body too large" }` |
 
-**重复一律回 `200`，不得用非 2xx 表达。** `409` / `404` 之类看着更像"冲突"或"没见过"，但宿主的判据只看状态码：非 2xx ⇒ 这一次推送算**未投递**（`src/pet-client.ts`），那条通知留在 `pending`，"看到即取消"当场断链（`IS-066`）。去重是你自己的事：重复只记日志，不改状态、不重弹、不重 ack。只有"这条我永远处理不了"（body 读不懂、没有 `id`、超限）才回 4xx。
+**重复一律回 `200`，不得用非 2xx 表达。** `409` / `404` 之类看着更像"冲突"或"没见过"，但宿主的判据只看状态码：非 2xx ⇒ 这一次推送算**未投递**（`src/pet-client.ts`），那条通知留在 `pending`，"看到即取消"当场断链。去重是你自己的事：重复只记日志，不改状态、不重弹、不重 ack。只有"这条我永远处理不了"（body 读不懂、没有 `id`、超限）才回 4xx。
 
 ### 4.2 桌宠 → 插件（控制端口）
 
@@ -260,7 +269,7 @@ POST /ack   { "v": 1, "noticeId": "…", "action": "shown" | "dismissed", "token
 
 `shown` 只表示桌宠**已实际显示**，不能从 HTTP POST 成功推断 —— 而且只有真声明了 `ack-shown` 的桌宠才谈得上这一条（见下）。
 
-#### 4.2.1 能力协商（`PL-PR-NW-02`）
+#### 4.2.1 能力协商
 
 两个方向都可省。**省 ≠ 空**，这是本节唯一必须记住的一条。
 
@@ -338,6 +347,12 @@ v1 **只发**：事件名、`sessionId`、会话标题（可关、截断 160）�
 - 所有 `register` / `listen` 的 disposer 都挂在 `ctx.effect` 上。
 - 浏览器侧 `POST` 做 same-origin 校验后仍要过 `/seen` 的四项核对。
 
+三条容易漏掉的事实（它们决定你该怎么读这份契约）：
+
+- **缺 `Origin` 的回环请求按同源放行**：判定是「`Host` 必须是回环名（`localhost` / `127.0.0.1` / `[::1]`）；`Origin` 缺席或为空 ⇒ 放行；带了 `Origin` 则其 host 必须回环、port 必须与 `Host` 逐字相等」。⇒ 本机上不带 `Origin` 的客户端（`curl` 之类）够得着 `/pet-bridge/*` 的**只读**面：`/notices` 会把待确认通知的 `noticeId` 给它。但**"读到"不等于"退休"** —— `/seen` 另有上面那条里的四项核对，缺一不可。
+- **插件 → 桌宠的 `POST /event` 没有凭据**：token 保护的是反方向（桌宠 → 插件，见上面 token 那条）。⇒ **任何本机进程都能往你的桌宠端口投事件**。你的防线在接收端这一侧：按事件 `id` 去重、按 `noticeId` 建/撤提示（§4.1），并自行决定要不要只信回环来源。
+- **L3 只看几何、不看遮挡**：判定是「结果行与可视带的矩形交集 + 连续停留 ≥ `seenDwellMs`」，被别的元素盖住**照样算看到**（§1.2）。⇒ 它证明的是"有机会看到"，不是"看到了"。这是设计选择：更严的判定（例如拿 `elementFromPoint` 探一下）会在吸顶标题与输入框遮罩上抖动，而误判会复活"提示被静默吞掉"这个插件存在的第一理由。
+
 ---
 
 ## 5. 开发
@@ -352,7 +367,7 @@ npm run probe:http      # 探针：web 资产 + 控制面；陈旧半边、两�
 npm run roundtrip       # 离线跑通全链路（不碰运行中的 DSH）
 npm run acceptance      # 真机 CDP 验收（一次只跑一个宿主）
 npm run mock-pet        # 假桌宠：收事件 + 交互 ack（seen/dismiss/state/quit）
-npm run receiver:check  # 最小接收端（tools/min-receiver.py）的 53 项离线检查（要 python；故意不接进 check）
+npm run receiver:check  # 最小接收端（tools/min-receiver.py）的离线检查（要 python；故意不接进 check）
 npm run wire:check      # 抓真 lib/index.js 的线上字节，逐条过 protocol/bridge-v1.schema.json（故意不接进 check）
 npm run compat:0.2.0    # 对着 0.2.0-rc.2 的声明再查一遍（要联网，故意不接进 check；见 §5.2）
 npm run check           # typecheck → build → smoke:bundle → check:artifacts → test（唯一闸门）
@@ -394,7 +409,7 @@ harness 的结构化面集中在 **`src/pins.ts`** —— 唯一引用 DSH 内�
 
 ### 5.5 其它
 
-- **测试怎么跑**：`npm test` = `npm run build:test` + `node tools/run-tests.mjs`。运行器把测试文件显式列出，并**按当前 Node 线探测单进程开关**：Node 24 认 `--test-isolation=none`，Node 22 只认 `--experimental-test-isolation=none`（喂它稳定名会直接 `node: bad option: --test-isolation=none` + exit 9，压根不读测试文件），两条线都不认时退回默认的逐文件隔离。**为什么非要单进程**：默认的逐文件子进程走 `stdio: 'pipe'`，受限沙箱里会 `EPERM`。**用例条数会随版本变，别背它** —— 判据是末行打印的实测条数（`tests <n>` 与 `pass <n>` 相等、`fail 0`）：本机 `node 24.19.0` 现取（2026-10-06）`223/223`；CI 上两条 Node 线各自那份读数看 Actions 的运行日志（**CI 才是那条线的权威读数**，本机这次只跑了 24 线）。
+- **测试怎么跑**：`npm test` = `npm run build:test` + `node tools/run-tests.mjs`。运行器把测试文件显式列出，并**按当前 Node 线探测单进程开关**：Node 24 认 `--test-isolation=none`，Node 22 只认 `--experimental-test-isolation=none`（喂它稳定名会直接 `node: bad option: --test-isolation=none` + exit 9，压根不读测试文件），两条线都不认时退回默认的逐文件隔离。**为什么非要单进程**：默认的逐文件子进程走 `stdio: 'pipe'`，受限沙箱里会 `EPERM`。**用例条数会随版本变，别背它** —— 判据是每次跑完末行打印的实测条数（`tests <n>` 与 `pass <n>` 相等、`fail 0`）；CI 上两条 Node 线各跑一次，**CI 才是那条线的权威读数**。
 - **DOM face 每次判定都重新解析**：L3 依赖 `[data-chat-flow]` 与 `[data-conversation-scroll]`，而 harness 每次切换会话都会重挂载会话槽 ⇒ `createVisibilityDeps()` **每次读取时重新 `query`**。存成值会在第一次切换后变成死引用（矩形测量全 0 ⇒ `isTurnVisible()` 恒 false ⇒ 页面此后**永远不发 `/seen` 且不打日志**，只有刷新才恢复）。
 
 ## 6. 发布与 CI
