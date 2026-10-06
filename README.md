@@ -75,6 +75,9 @@ dsh plugin add --profile web link:.
 # 备选：实体拷贝（硬链接镜像），升级语义不同
 dsh plugin add --profile web file:.
 
+# 第三条渠道：registry 包（不必克隆、不必构建、不能改源码）
+dsh plugin add --profile web dsh-pet-seen@0.1.1
+
 # 装完必须重启 DSH 才会加载宿主半边（这一步会中断正在运行的会话）
 ```
 
@@ -82,6 +85,10 @@ dsh plugin add --profile web file:.
 - **克隆后不需要构建**：`lib/index.js`（宿主侧）与 `client/client.js`（浏览器侧）**已入库**，安装过程不需要 Node.js 或任何工具链。
 - **只有改了 `src/` 才需要构建**（Node 22+）：`npm install && npm run build`；改完必须把 `src/` 与重建后的产物**一起提交**，否则 `npm run check` 会红。产物由 tsdown 生成，**不要手改**。
 - `dsh plugin` 只是 pnpm 的一层封装，`add` **不会热加载**已运行的宿主。
+- **registry 渠道**（`dsh-pet-seen@<版本>`）：包已发布在 npm 上（`npm view dsh-pet-seen dist-tags` 现取为 `latest = 0.1.1`），**这一条不需要克隆、不需要构建、也不能改源码** —— 包里带的是构建好的两半产物（`lib/index.js` + `client/client.js`）、`protocol/` 与 `cordis.patch.yml`。走它就不必看上面的 `cd` 与克隆步骤。
+  - **写死版本号，别指望 `@latest`**（现取 2026-10-06，本机 `pnpm 11.21.0`）：`pnpm add dsh-pet-seen`（等价 `@latest`）解析到的是 **`0.0.1`**，而 `pnpm add dsh-pet-seen@0.1.1` 装到的才是 **`0.1.1`**。测法（可复现）：一个空目录 + `pnpm-workspace.yaml`，`.npmrc` 分别写 `registry=https://registry.npmjs.org/` 与默认的镜像源各跑一次 —— **两次都解析成 `0.0.1`** ⇒ 是 pnpm 侧 resolver 的行为，**不是**源不同步（同一时刻 `npm view` 两个源都报 `latest = 0.1.1`）。列版本 `@0.1.2` 之类就不会被这一步拦住。
+  - 装完**一定要核对装到的是哪一版**（判据见 §2.3 的「装的是哪一版」那行）—— 这一步是静默的，装错了不会报错。
+  - **与上面两条的关系**：源码改不动、`git pull` 也无关；升级 = 换一个版本号再 `add` 一次（见 2.2）。想改源码就用 `link:` / `file:`。
 
 ### 2.1 桌面应用（Electron）—— 它读 `desktop` profile
 
@@ -94,6 +101,8 @@ dsh plugin add --profile web file:.
 
 - `link:` 安装：源码改了**不用重装**（运行期直接读工作树），但 ① 宿主半边 `lib/index.js` **只有重启宿主才会换**（`link:` 不保证热重载，实测）；② 页面半边由宿主自己重建。⇒ 拿到新源码后：`npm run build` → **重启宿主**。
 - `file:` 安装是**硬链接镜像**，不是打包解包：就地改写会**穿透**进 `node_modules`，改名/重建会**断链并冻住那个文件** ⇒ `git pull` 后**必须重装**，只跑 `build` 修不好已断链的那一半。
+- `registry` 安装：`git pull` 与它**无关**（profile 里那份来自 registry，不是本仓工作树） ⇒ 升级 = **换一个新版本号再 `add` 一次**（例：`dsh plugin add --profile web dsh-pet-seen@0.1.2`）→ **重启宿主**。同一条命令重复跑不会"顺手升级"（见 §2 那条写死版本号的说明）。
+- 三条渠道都成立的一条：**宿主半边只有重启宿主才会换** ⇒ 任何升级的最后一步都是重启。
 - 改了包名或版本号 ⇒ profile 里的依赖名与 `dsh.profile.bundles` 条目名都会变 ⇒ **必须重装**。
 
 ### 2.3 装完怎么确认：**两半分开看**
@@ -103,10 +112,13 @@ dsh plugin add --profile web file:.
 | 看什么 | 判据 | 为什么是它 |
 | --- | --- | --- |
 | 装进 profile 了吗 | 该 profile 的 `dsh.profile.bundles` 里有 `dsh-pet-seen` | 只装不启用时这里没有它，宿主不会加载 |
+| 装的是哪一版 | `bridge-state.mjs` 头部行的 `plugin=<版本>` —— 与**你这次安装命令里写的那一版**逐字相同（`npm view dsh-pet-seen dist-tags.latest` 只是查最新版是多少，**不是**判据） | 走 registry 渠道时"我装到的是哪一版"最容易静默装错（`add dsh-pet-seen` 现取会解析成 `0.0.1`，见 §2）⇒ 这一行是**唯一**直接读数 |
 | 宿主半边起来了吗 | `~/.dsh/pet-bridge.json` 存在，且 `controlPort` 就是你配的 `17323` | **只有宿主半边会写**这个文件；token 每次宿主启动轮换 |
 | 宿主半边状态可读吗 | `node tools/bridge-state.mjs` 打出头部行（形如 `controlPort=17323 … plugin=0.1.1 build=<16 位>`） | 它自己读文件里的 token 去问 `/state`，不必手抄 token |
 | 页面半边在报吗 | `/state` 的 `browserTabs` 里有你那个 tab 的行，且带 `reader=` 与 `build=` | **只有页面半边会报**这两条；行随 15 s 租约过期，"没有行"= 页面没在报，不等于没装 |
 | 两半是同一个构建吗 | tab 行的 `build=` == 头部行的 `build=` | 一次构建必然同 id；两者不同 ⇒ `MIXED`，该 tab 从未报过 ⇒ `OLD`；`npm run probe:http` 把两者都判 FAIL |
+
+**这一个代码块里，第一条与第二条要你手上有仓库**（`node tools/bridge-state.mjs` 与 `npm run probe:http` 都读仓里的文件/脚本，而 `tools/` 不随包发布，见 §6 末条）；走 registry 渠道的话看第三条 —— token 在 `~/.dsh/pet-bridge.json` 里，自己问 `/state` 就能同时拿到 `pluginVersion` 与 `buildId`。
 
 ```powershell
 node tools/bridge-state.mjs                 # /state 摘要：petPort、会话、每个 tab 的诊断、通知
@@ -380,7 +392,7 @@ harness 的结构化面集中在 **`src/pins.ts`** —— 唯一引用 DSH 内�
 
 ### 5.5 其它
 
-- **测试怎么跑**：`npm test` = `npm run build:test` + `node tools/run-tests.mjs`。运行器把测试文件显式列出，并**按当前 Node 线探测单进程开关**：Node 24 认 `--test-isolation=none`，Node 22 只认 `--experimental-test-isolation=none`（喂它稳定名会直接 `node: bad option: --test-isolation=none` + exit 9，压根不读测试文件），两条线都不认时退回默认的逐文件隔离。**为什么非要单进程**：默认的逐文件子进程走 `stdio: 'pipe'`，受限沙箱里会 `EPERM`。两条线的现取读数（同一套用例）：`node 24.19.0` → `--test-isolation=none` → 203/203；`node 22.23.3` → `--experimental-test-isolation=none` → 203/203。
+- **测试怎么跑**：`npm test` = `npm run build:test` + `node tools/run-tests.mjs`。运行器把测试文件显式列出，并**按当前 Node 线探测单进程开关**：Node 24 认 `--test-isolation=none`，Node 22 只认 `--experimental-test-isolation=none`（喂它稳定名会直接 `node: bad option: --test-isolation=none` + exit 9，压根不读测试文件），两条线都不认时退回默认的逐文件隔离。**为什么非要单进程**：默认的逐文件子进程走 `stdio: 'pipe'`，受限沙箱里会 `EPERM`。**用例条数会随版本变，别背它** —— 判据是末行打印的实测条数（`tests <n>` 与 `pass <n>` 相等、`fail 0`）：本机 `node 24.19.0` 现取（2026-10-06）`223/223`；CI 上两条 Node 线各自那份读数看 Actions 的运行日志（**CI 才是那条线的权威读数**，本机这次只跑了 24 线）。
 - **DOM face 每次判定都重新解析**：L3 依赖 `[data-chat-flow]` 与 `[data-conversation-scroll]`，而 harness 每次切换会话都会重挂载会话槽 ⇒ `createVisibilityDeps()` **每次读取时重新 `query`**。存成值会在第一次切换后变成死引用（矩形测量全 0 ⇒ `isTurnVisible()` 恒 false ⇒ 页面此后**永远不发 `/seen` 且不打日志**，只有刷新才恢复）。
 
 ## 6. 发布与 CI
