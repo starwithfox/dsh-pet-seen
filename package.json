@@ -68,7 +68,8 @@
     "acceptance": "node tools/cdp-acceptance.mjs",
     "check:artifacts": "git diff --exit-code HEAD -- lib client",
     "check": "npm run typecheck && npm run build && npm run smoke:bundle && npm run check:artifacts && npm test",
-    "mock-pet": "node tools/mock-pet.mjs"
+    "mock-pet": "node tools/mock-pet.mjs",
+    "receiver:check": "python tools/min-receiver-check.py"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.2",

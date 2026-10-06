@@ -33,6 +33,9 @@ refs/
 # --- 验收跑出来的 CDP 快照：机器生成、每次不同，只留脚本 ---
 tools/cdp-report*.json
 
+# --- 最小接收端自测（tools/min-receiver-check.py）在 tools/ 下建的临时件 ---
+tools/_selftest_tmp/
+
 # --- 私密与本地文件 ---
 .env
 .env.*
