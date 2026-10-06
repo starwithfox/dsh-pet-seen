@@ -9,7 +9,7 @@ DSH 插件。把 Harness 的任务状态**推**给本机桌宠，并把「**用�
 ## 1. 亮点
 
 - **「看到即取消」不靠"窗口有焦点"** —— 判定分三级，只有 L3（**本次结果自己的那一行**进入对话滚动容器视口并连续停留 ≥ `seenDwellMs`）才算数。只判到 L2 会在多任务并行时**静默吞掉**提示（详见 [1.2](#12-看到即取消的判定分三级)）。
-- **接收端不需要懂 DSH** —— 只要监听一个入站端点 `POST /event`，再会调 `/hello` / `/state` / `/ack` 三个接口就够；协议是**版本化且向后兼容**的：`/state` 的未知键一律忽略 ⇒ **加字段不必升 `v`**。你不必读 DSH 的会话文件、不必碰它的内部状态，也不必用 Node/JS 写。
+- **接收端不需要懂 DSH** —— 入站端点只有一个（`POST /event`），要调的接口三个（`/hello` / `/state` / `/ack`），接口面就这些；协议是**版本化且向后兼容**的：`/state` 的未知键一律忽略 ⇒ **加字段不必升 `v`**。你不必读 DSH 的会话文件、不必碰它的内部状态，也不必用 Node/JS 写。**证据等级、以及还没覆盖的那一半，写在 [§4 协议](#4-协议) 开头。**
 
 ### 1.1 为什么需要它
 
@@ -170,6 +170,8 @@ curl "http://127.0.0.1:3080/pet-bridge/notices?sessionId=<会话 id>"
 
 本节是**契约的正文**：要实现的入站端点只有一个（`POST /event`），要调的接口三个（`/hello` / `/state` / `/ack`），字段、状态机与失败码都在这里。
 
+> **证据等级**：这份契约**够不够写出一个接收端**是【实测】—— 本仓的第二个接收端只按本节 + `protocol/bridge-v1.schema.json` 写成，真机四条链路（握手 → 收结果事件 → `/state` 对齐 → `ack shown`）成立，另有一份抓线上真实字节逐条过 schema 的校验器。**没有取得的是"第三方独立接入"**【推断】—— 写它的人与本插件同源，真正的外部接收端至今没有一个。⇒ 本节承诺的是"照它接上了"，不是"别人已经照它接上了"。那份接收端与两条校验命令都在仓内 `tools/` 里，**不随包发布**（见 §5）。
+
 **但它不是"你的桌宠唯一需要读的东西"** —— 有两件事按"一处一写"留在了本节之外，这里只给去处、不重复：
 
 | 你还缺什么 | 去处 |
@@ -259,6 +261,8 @@ POST /ack   { "v": 1, "noticeId": "…", "action": "shown" | "dismissed", "token
 | `buildId` | **宿主半边**的构建标识（见 [§5.3](#53-构建标识握手)） |
 | `pluginVersion` | 该构建当时的 `package.json` `version`（人看的名字，与 `v` 无关） |
 
+**`sessions[]` 与 `notices[]` 每行的字段**（上面那张表只列顶层键）见 `protocol/bridge-v1.schema.json` 的 `SessionProgressSnapshot` / `NoticeSnapshot`：会话行有 `title` / `cwd`（工作目录，隐私口径见 [§4.4](#44-隐私边界)）/ `running` / `runId` / `lastTurnEnd` / `toolCalls` / `lastTool` / `todoCount` / `completedTodoCount` / `percent` / `reader`；通知行有 `noticeId` / `runId` / `reason` / `state` / `delivered` / `seenAt`。
+
 握手文件写在 `~/.dsh/pet-bridge.json`（权限 0600）：
 
 ```json
@@ -321,7 +325,7 @@ POST /ack   { "v": 1, "noticeId": "…", "action": "shown" | "dismissed", "token
 
 ### 4.4 隐私边界
 
-v1 **只发**：事件名、`sessionId`、会话标题（可关、截断 160）、工具**名**、进度计数、有界状态文案。
+v1 **只发**：事件名、`sessionId`、会话标题（可关、截断 160）、**会话工作目录 `cwd`**（截断 4096；只出现在 `/state.sessions[]` 里，事件流里没有它；**目前没有开关**，`includeTitle` 管不到它）、工具**名**、进度计数、有界状态文案。
 
 **不发**：prompt 全文、assistant 消息、工具参数原文、工具结果、`todo/write` 文本、凭据、请求体。工具结果失败只发通用类别，不发错误正文 —— 错误文本可能复述用户输入。
 
@@ -366,6 +370,7 @@ npm run check:artifacts # 判定「HEAD 里的产物 = 源码产物」（在 bui
 npm run probe:http      # 探针：web 资产 + 控制面；陈旧半边、两半不同构建与漂移都判 FAIL
 npm run roundtrip       # 离线跑通全链路（不碰运行中的 DSH）
 npm run acceptance      # 真机 CDP 验收（一次只跑一个宿主）
+npm run auth:check      # 离线自检验收驱动能不能认到 WebServer（无 cookie 401 / 自铸 cookie 200 / 篡改 cookie 401）
 npm run mock-pet        # 假桌宠：收事件 + 交互 ack（seen/dismiss/state/quit）
 npm run receiver:check  # 最小接收端（tools/min-receiver.py）的离线检查（要 python；故意不接进 check）
 npm run wire:check      # 抓真 lib/index.js 的线上字节，逐条过 protocol/bridge-v1.schema.json（故意不接进 check）
@@ -427,7 +432,7 @@ CI 上**没有 DSH 安装**，所以类型检查只能对着仓库自己 `devDep
 
 **CI 绿不等于所有宿主版本都验过**：`npm run check` 覆盖的是 `devDependencies` pin 的那条线；`compat:0.2.0` 需要联网，**故意不接进** `check`；活 `web` profile 跑的那条 `0.1.5` 线目前**没有栅门**（范围口径见 §2.4）。
 
-包内容不因 CI 改变：`files` 仍是 `lib`、`client`、`cordis.patch.yml`、`README.md`、`LICENSE`；`src/`、`tests/`、`tools/` 与 `.github/` 都不随包发布。
+包内容不因 CI 改变：`files` 是 `lib`、`client`、`protocol`（§4 那份 `bridge-v1.schema.json`）、`cordis.patch.yml`、`README.md`、`LICENSE`；`src/`、`tests/`、`tools/` 与 `.github/` 都不随包发布。
 
 ## 7. 目录
 
@@ -436,6 +441,7 @@ CI 上**没有 DSH 安装**，所以类型检查只能对着仓库自己 `devDep
 ├── cordis.patch.yml      # 把插件挂进 profile loader 树 + 默认配置
 ├── tsdown.config.ts      # 宿主 ESM bundle + 浏览器 CJS 工厂 bundle
 ├── lib/, client/         # 【入库】两半产物，tsdown 生成，勿手改
+├── protocol/             # 【随包发布】bridge-v1.schema.json：§4 契约的语言无关副本
 ├── src/
 │   ├── index.ts          # apply(ctx, config)：订阅、控制服务、推送、可选浏览器路由
 │   ├── pins.ts           # 唯一引用 DSH 内部类型的模块：faces + 编译期锚点 + 其机制
@@ -454,5 +460,5 @@ CI 上**没有 DSH 安装**，所以类型检查只能对着仓库自己 `devDep
 ## 8. 许可与范围
 
 - **本包（`dsh-pet-seen`）是 MIT，著作权归 `starwithfox`**：正文见 `LICENSE`，且随包发布（`npm pack` 会带你核到）。
-- **范围声明**：本包**只含 DSH 插件侧** —— `lib/`、`client/`、`cordis.patch.yml`、`README.md`、`LICENSE`（即 `package.json` 的 `files` 清单）。
+- **范围声明**：本包**只含 DSH 插件侧** —— `lib/`、`client/`、`protocol/`（含 §4 那份 `bridge-v1.schema.json`）、`cordis.patch.yml`、`README.md`、`LICENSE`（即 `package.json` 的 `files` 清单）。
 - **另一侧（你的桌宠接收端）不在本包内**、也不随本包分发：它是你自己的程序，实现方式与许可证都由你定；本包只承诺 §4 那份协议。
