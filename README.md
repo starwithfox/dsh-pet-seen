@@ -179,7 +179,7 @@ curl "http://127.0.0.1:3080/pet-bridge/notices?sessionId=<会话 id>"
 }
 ```
 
-归一化事件：`idle` / `running` / `completed` / `error` / `notice/seen` / `session/removed`。`id` 全局唯一，**按它去重**；`sessionId` / `runId` / `targetTurnRef` 用来把你的提示归到正确的会话。
+归一化事件：`idle` / `running` / `completed` / `error` / `notice/seen`。`id` 全局唯一，**按它去重**；`sessionId` / `runId` / `targetTurnRef` 用来把你的提示归到正确的会话。
 
 **运行结算成哪个事件**（与 `src/index.ts` 的 `completionDispatch` 同源）：
 

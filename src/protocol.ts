@@ -123,21 +123,22 @@ export type PetEventName =
   | 'completed'
   | 'error'
   | 'notice/seen'
-  | 'session/removed'
 
 /**
  * The normalized events this host actually dispatches, as a runtime list.
  *
- * Its sibling {@link RESERVED_PET_EVENT_NAMES} is the other half of the same
- * union: `session/removed` is named here in the type, accepted by the pet's own
- * `EVENT_NAMES` whitelist, and listed in `README.md` §4.1 — but the host
- * subscribes to nothing that would ever send it, and `NoticeStore.removeSession`
- * has no caller. Publishing it as an implemented event would turn that debt into
- * a promise (IS-014, PL-PR-IV-01), so the published schema carries it as
- * **reserved** instead.
+ * `session/removed` used to sit beside these as a **reserved** name: the type
+ * and the pet's own `EVENT_NAMES` accepted it, but nothing subscribed to
+ * `session/disposed`, so the host could never send it (IS-014). `PL-PR-IV-01`
+ * ran the runtime probe and settled it the other way — in real use the only
+ * thing that disposes a session is the teardown of the fiber that created it,
+ * and every root session is created by a process-lifetime fiber. The only
+ * session that ever got disposed was a finished subagent's, which the pet does
+ * not even display. So the name is gone rather than reserved: publishing a
+ * capability nobody can trigger is what IS-014 was about.
  *
  * Runtime arrays rather than types alone because `protocol/bridge-v1.schema.json`
- * enumerates both groups and the drift test compares them by value (PL-PR-NW-02).
+ * enumerates them and the drift test compares them by value (PL-PR-NW-02).
  */
 export const PET_EVENT_NAMES: readonly PetEventName[] = [
   'idle',
@@ -146,16 +147,6 @@ export const PET_EVENT_NAMES: readonly PetEventName[] = [
   'error',
   'notice/seen',
 ]
-
-/**
- * Events named in the union that this host never dispatches.
- *
- * Ownership is `PL-PR-IV-01`; when the runtime probe settles that item, the name
- * moves between the two lists and nothing else about the wire format changes
- * (`protocol/bridge-v1.schema.json` states the same rule as a compatibility
- * clause).
- */
-export const RESERVED_PET_EVENT_NAMES: readonly PetEventName[] = ['session/removed']
 
 /**
  * Turn-end reason kinds the notification state machine distinguishes. Mirrors
@@ -188,7 +179,7 @@ export type TurnEndKind =
  * These are the two *result* events. `error` appears in both roles — a
  * notice-bearing result and a running-time failure report — so the pet's rule is
  * "pop up only when `noticeId` is present", never "when the name is `error`".
- * Everything else (`idle`, `running`, `session/removed`) is lifecycle chatter.
+ * Everything else (`idle`, `running`) is lifecycle chatter.
  */
 export const NOTICE_EVENT_NAMES: readonly PetEventName[] = ['completed', 'error']
 

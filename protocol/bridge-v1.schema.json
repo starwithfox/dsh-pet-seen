@@ -106,26 +106,15 @@
           "minLength": 1
         },
         "event": {
-          "description": "Two groups on purpose. The first is what this host actually dispatches; the second is declared but never sent, and is carried as reserved so the contract states the debt instead of promising a capability (IS-014, PL-PR-IV-01).",
-          "oneOf": [
-            {
-              "title": "implemented",
-              "description": "Dispatched by src/index.ts today.",
-              "enum": [
-                "idle",
-                "running",
-                "completed",
-                "error",
-                "notice/seen"
-              ]
-            },
-            {
-              "title": "reserved",
-              "description": "Owned by PL-PR-IV-01 · no subscriber today, so this host never sends it (IS-014). Moving it out of reserved is not a contract change; deleting it is a minor v1 change. Neither bumps PROTOCOL_VERSION.",
-              "enum": [
-                "session/removed"
-              ]
-            }
+          "description": "The normalized events this host dispatches. `session/removed` was carried here as a reserved name until PL-PR-IV-01's runtime probe showed it had no triggerable surface (switching, closing, reloading and archiving all leave the session in the store; the only session ever disposed is a finished subagent's, which the pet does not display). It was removed rather than left reserved, so this enum is the whole vocabulary: an unknown name from a newer host degrades, it does not fail.",
+          "title": "implemented",
+          "type": "string",
+          "enum": [
+            "idle",
+            "running",
+            "completed",
+            "error",
+            "notice/seen"
           ]
         },
         "source": {

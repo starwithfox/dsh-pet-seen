@@ -737,7 +737,6 @@ export {
   PET_EVENT_NAMES,
   PLUGIN_VERSION,
   PROTOCOL_VERSION,
-  RESERVED_PET_EVENT_NAMES,
   clampText,
   clampTitle,
   isLoopbackHost,

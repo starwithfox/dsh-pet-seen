@@ -35,7 +35,6 @@ const {
   BRIDGE_CAPABILITIES,
   PET_EVENT_NAMES,
   PROTOCOL_VERSION,
-  RESERVED_PET_EVENT_NAMES,
   helloResponse,
   isPort,
   parseHello,
@@ -46,7 +45,6 @@ interface SchemaDef {
   readonly properties?: Record<string, unknown>
   readonly required?: readonly string[]
   readonly enum?: readonly unknown[]
-  readonly oneOf?: readonly { readonly title?: string, readonly enum?: readonly unknown[], readonly description?: string }[]
 }
 
 interface Schema {
@@ -177,20 +175,15 @@ describe('published schema ⇄ src/protocol.ts drift lock (PL-PR-NW-02)', () => 
     }
   })
 
-  it('splits the event enum into implemented and reserved', () => {
-    const event = propertiesOf('PetEvent').event as SchemaDef
-    const oneOf = event.oneOf
-    assert.ok(Array.isArray(oneOf), 'PetEvent.event must be a grouped enum')
-    assert.equal(oneOf.length, 2)
-    const [implemented, reserved] = oneOf
-    assert.equal(implemented?.title, 'implemented')
-    assert.deepEqual(implemented?.enum, [...PET_EVENT_NAMES])
-    assert.equal(reserved?.title, 'reserved')
-    assert.deepEqual(reserved?.enum, [...RESERVED_PET_EVENT_NAMES])
-    // The reserved group must state its owner and its debt; a bare enum would
-    // read as a capability that exists (IS-014, PL-PR-IV-01).
-    assert.match(reserved?.description ?? '', /PL-PR-IV-01/)
-    assert.match(reserved?.description ?? '', /never sends it|IS-014/)
+  it('enumerates exactly the events this host dispatches', () => {
+    const event = propertiesOf('PetEvent').event as SchemaDef & { readonly oneOf?: unknown }
+    // A flat enum, not a grouped one: the `reserved` group that held
+    // `session/removed` was removed when PL-PR-IV-01's probe showed the event
+    // had no triggerable surface. A grouped enum with one non-empty group would
+    // keep advertising a distinction the contract no longer makes.
+    assert.equal(event.oneOf, undefined, 'PetEvent.event must be a flat enum')
+    assert.deepEqual(event.enum, [...PET_EVENT_NAMES])
+    assert.equal(PET_EVENT_NAMES.includes('session/removed' as never), false)
   })
 
   it('pins the closed vocabularies both halves switch on', () => {
