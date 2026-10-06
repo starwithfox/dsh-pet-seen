@@ -706,11 +706,15 @@ export type { ControlServer, ControlServerDeps } from './control-server.js'
 export { DEFAULT_LEASE_TTL_MS, mountBrowserRoutes } from './routes.js'
 export type { BrowserRoutes, WebServerFace } from './routes.js'
 export type {
+  BridgeCapability,
+  HelloRequest,
+  HelloResponse,
   NoticeSnapshot,
   NoticeState,
   PendingNotice,
   PetEvent,
   PetEventName,
+  ProtocolRange,
   SessionProgressSnapshot,
   SessionReaderIndex,
   StatePayload,
@@ -720,6 +724,7 @@ export type {
 } from './protocol.js'
 export type { RunCompletion, SessionFacts } from './state.js'
 export {
+  BRIDGE_CAPABILITIES,
   BROWSER_ROUTES,
   BUILD_ID,
   CONTROL_ROUTES,
@@ -729,8 +734,10 @@ export {
   MAX_REQUEST_BODY_BYTES,
   MAX_TITLE_LENGTH,
   NOTICE_EVENT_NAMES,
+  PET_EVENT_NAMES,
   PLUGIN_VERSION,
   PROTOCOL_VERSION,
+  RESERVED_PET_EVENT_NAMES,
   clampText,
   clampTitle,
   isLoopbackHost,

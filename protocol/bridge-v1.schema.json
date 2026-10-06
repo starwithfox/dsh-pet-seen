@@ -1,0 +1,646 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/starwithfox/dsh-pet-seen/protocol/bridge-v1.schema.json",
+  "title": "dsh-pet-seen bridge protocol v1",
+  "description": "Language-independent wire contract between the dsh-pet-seen host plugin and any local desktop pet (PL-PR-NW-02). One vocabulary, three participants: the host half (TypeScript), the receiving half (any language), and the browser page on the same-origin routes. This file is the published spelling of what src/protocol.ts defines; the drift test in tests/negotiation.test.ts fails when the two disagree. COMPATIBILITY RULES: (1) required fields never disappear and never change meaning inside v1; (2) new fields are optional and additive, and do not bump the protocol revision; (3) changing a field's meaning, removing a field, or changing the state machine (what a terminal notice state means) is what bumps the revision; (4) unknown fields are ignored by every receiver, so a sender may add one without asking; (5) unknown enum values degrade rather than fail - an unrecognized reason renders a neutral message and never a success. UNKNOWN FIELD RULE: every object below allows additional properties on purpose. Receivers must ignore them, senders must not rely on them being preserved.",
+  "x-endpoints": [
+    {
+      "method": "POST",
+      "path": "/event",
+      "direction": "host -> pet",
+      "body": "#/$defs/PetEvent",
+      "note": "The only inbound endpoint the pet must implement."
+    },
+    {
+      "method": "POST",
+      "path": "/hello",
+      "direction": "pet -> host",
+      "body": "#/$defs/HelloRequest",
+      "response": "#/$defs/HelloResponse",
+      "note": "Capability negotiation. Optional in both directions: a pet that declares nothing still completes the handshake (PL-PR-NW-02)."
+    },
+    {
+      "method": "GET",
+      "path": "/state",
+      "direction": "pet -> host",
+      "response": "#/$defs/StatePayload",
+      "note": "The pet reads sessions and revision and ignores the rest; alignment is by noticeId, never by event replay."
+    },
+    {
+      "method": "POST",
+      "path": "/ack",
+      "direction": "pet -> host",
+      "body": "#/$defs/AckRequest",
+      "response": "#/$defs/AckResponse",
+      "note": "shown means the popup is really on screen; it can never be inferred from a successful POST."
+    }
+  ],
+  "$defs": {
+    "BridgeCapability": {
+      "title": "BridgeCapability",
+      "description": "Capability names negotiated at /hello. One vocabulary for both sides: the pet declares what it implements, the host answers with what it supports plus the agreed intersection. A missing capability removes an assumption, never the basic receive path.",
+      "enum": [
+        "events",
+        "state-sync",
+        "ack-shown",
+        "ack-dismissed",
+        "notice-seen"
+      ]
+    },
+    "TurnEndKind": {
+      "title": "TurnEndKind",
+      "description": "Why a turn ended. 'unknown' is not a harness kind: it is what a missing, malformed or not-yet-named reason degrades to, and it must never be rendered as a successful completion.",
+      "enum": [
+        "completed",
+        "aborted",
+        "blocked",
+        "error",
+        "forked",
+        "max-tokens",
+        "interrupted",
+        "unknown"
+      ]
+    },
+    "NoticeState": {
+      "title": "NoticeState",
+      "description": "Lifecycle of one notice, owned by the host. seen and dismissed are terminal and are never reopened by a late or reordered event.",
+      "enum": [
+        "pending",
+        "shown",
+        "seen",
+        "dismissed"
+      ]
+    },
+    "SessionReaderIndex": {
+      "title": "SessionReaderIndex",
+      "description": "Which of the page's four session reads answered; -1 means none did. A diagnostic carried by the snapshot, never a precondition for anything the pet does.",
+      "enum": [
+        -1,
+        0,
+        1,
+        2,
+        3
+      ]
+    },
+    "PetEvent": {
+      "title": "PetEvent",
+      "description": "One normalized event pushed to the pet. id is globally unique and is what the pet dedupes on; several raw harness events collapse onto one normalized name.",
+      "type": "object",
+      "required": [
+        "v",
+        "id",
+        "event",
+        "source",
+        "hook",
+        "sessionId",
+        "runId",
+        "targetTurnRef",
+        "timestamp"
+      ],
+      "properties": {
+        "v": {
+          "const": 1
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "event": {
+          "description": "Two groups on purpose. The first is what this host actually dispatches; the second is declared but never sent, and is carried as reserved so the contract states the debt instead of promising a capability (IS-014, PL-PR-IV-01).",
+          "oneOf": [
+            {
+              "title": "implemented",
+              "description": "Dispatched by src/index.ts today.",
+              "enum": [
+                "idle",
+                "running",
+                "completed",
+                "error",
+                "notice/seen"
+              ]
+            },
+            {
+              "title": "reserved",
+              "description": "Owned by PL-PR-IV-01 · no subscriber today, so this host never sends it (IS-014). Moving it out of reserved is not a contract change; deleting it is a minor v1 change. Neither bumps PROTOCOL_VERSION.",
+              "enum": [
+                "session/removed"
+              ]
+            }
+          ]
+        },
+        "source": {
+          "const": "deepseek-harness"
+        },
+        "hook": {
+          "type": "string",
+          "description": "Raw harness event or lifecycle hook that produced this event."
+        },
+        "sessionId": {
+          "type": "string"
+        },
+        "runId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "targetTurnRef": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "timestamp": {
+          "type": "integer"
+        },
+        "title": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 160
+        },
+        "message": {
+          "type": "string",
+          "maxLength": 240
+        },
+        "tool": {
+          "type": "string",
+          "description": "Tool name only; never its arguments or results."
+        },
+        "reason": {
+          "$ref": "#/$defs/TurnEndKind"
+        },
+        "seen": {
+          "type": "boolean",
+          "description": "Present on result events: true when the page had already observed this notice."
+        },
+        "noticeId": {
+          "type": "string",
+          "description": "Present on every notice-bearing event; the pet keys its popup on it. A result event is 'has noticeId', never 'is named error'."
+        }
+      },
+      "additionalProperties": true
+    },
+    "ProtocolRange": {
+      "title": "ProtocolRange",
+      "description": "Revisions a pet can speak, inclusive. A malformed range is dropped by the host, not treated as a failed handshake.",
+      "type": "object",
+      "required": [
+        "min",
+        "max"
+      ],
+      "properties": {
+        "min": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "additionalProperties": true
+    },
+    "HelloRequest": {
+      "title": "HelloRequest",
+      "description": "POST /hello body, pet to host. capabilities is absent on a legacy pet and that absence is meaningful: an empty array says 'aware of the negotiation, implements none of it'.",
+      "type": "object",
+      "required": [
+        "v",
+        "port"
+      ],
+      "properties": {
+        "v": {
+          "const": 1
+        },
+        "petVersion": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "description": "The port the pet is actually listening on for /event."
+        },
+        "token": {
+          "type": "string",
+          "description": "Shared secret from ~/.dsh/pet-bridge.json; rotated on every host start."
+        },
+        "protocol": {
+          "$ref": "#/$defs/ProtocolRange"
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/BridgeCapability"
+          },
+          "maxItems": 5,
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": true
+    },
+    "HelloResponse": {
+      "title": "HelloResponse",
+      "description": "POST /hello response, host to pet. capabilities is what this host supports; agreed is the intersection it will actually rely on. agreed is empty for a legacy pet, which is also the statement that no acknowledgement behaviour may be assumed.",
+      "type": "object",
+      "required": [
+        "v",
+        "ok",
+        "revision",
+        "petPort",
+        "capabilities",
+        "agreed"
+      ],
+      "properties": {
+        "v": {
+          "const": 1
+        },
+        "ok": {
+          "const": true
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "petPort": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/BridgeCapability"
+          },
+          "maxItems": 5
+        },
+        "agreed": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/BridgeCapability"
+          },
+          "maxItems": 5
+        },
+        "legacy": {
+          "const": true,
+          "description": "Present only when the request carried no capabilities field."
+        },
+        "petVersion": {
+          "type": "string",
+          "maxLength": 64,
+          "description": "Echo of the request's petVersion, when one was sent."
+        }
+      },
+      "additionalProperties": true
+    },
+    "AckRequest": {
+      "title": "AckRequest",
+      "description": "POST /ack body, pet to host. shown means the popup is really on screen; dismissed means the user closed it by hand.",
+      "type": "object",
+      "required": [
+        "v",
+        "noticeId",
+        "action"
+      ],
+      "properties": {
+        "v": {
+          "const": 1
+        },
+        "noticeId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "action": {
+          "enum": [
+            "shown",
+            "dismissed"
+          ]
+        },
+        "token": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    "AckResponse": {
+      "title": "AckResponse",
+      "description": "POST /ack response, host to pet.",
+      "type": "object",
+      "required": [
+        "v",
+        "ok"
+      ],
+      "properties": {
+        "v": {
+          "const": 1
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "state": {
+          "$ref": "#/$defs/NoticeState"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    "TurnEndRecord": {
+      "title": "TurnEndRecord",
+      "description": "One recorded turn/end outcome plus the turn reference the page can match.",
+      "type": "object",
+      "required": [
+        "turn",
+        "kind",
+        "at"
+      ],
+      "properties": {
+        "turn": {
+          "type": "integer"
+        },
+        "kind": {
+          "$ref": "#/$defs/TurnEndKind"
+        },
+        "at": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": true
+    },
+    "SessionProgressSnapshot": {
+      "title": "SessionProgressSnapshot",
+      "description": "Per-session progress bucket. One row per root session; never raw prompt, assistant or tool content.",
+      "type": "object",
+      "required": [
+        "sessionId",
+        "title",
+        "cwd",
+        "origin",
+        "running",
+        "runId",
+        "lastTurnEnd",
+        "toolCalls",
+        "lastTool",
+        "todoCount",
+        "completedTodoCount",
+        "percent",
+        "updatedAt"
+      ],
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        },
+        "title": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 160
+        },
+        "cwd": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "origin": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "subagent",
+            null
+          ]
+        },
+        "running": {
+          "type": "boolean"
+        },
+        "runId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "lastTurnEnd": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/TurnEndRecord"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "toolCalls": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "lastTool": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "todoCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "completedTodoCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "percent": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "updatedAt": {
+          "type": "integer"
+        },
+        "reader": {
+          "$ref": "#/$defs/SessionReaderIndex"
+        }
+      },
+      "additionalProperties": true
+    },
+    "NoticeSnapshot": {
+      "title": "NoticeSnapshot",
+      "description": "One run-completion notice awaiting delivery or acknowledgement. The pet aligns its popups to this list by noticeId and never replays events to reconstruct it.",
+      "type": "object",
+      "required": [
+        "noticeId",
+        "sessionId",
+        "runId",
+        "targetTurnRef",
+        "reason",
+        "completedAt",
+        "state",
+        "seenAt",
+        "delivered"
+      ],
+      "properties": {
+        "noticeId": {
+          "type": "string"
+        },
+        "sessionId": {
+          "type": "string"
+        },
+        "runId": {
+          "type": "string"
+        },
+        "targetTurnRef": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reason": {
+          "$ref": "#/$defs/TurnEndKind"
+        },
+        "completedAt": {
+          "type": "integer"
+        },
+        "state": {
+          "$ref": "#/$defs/NoticeState"
+        },
+        "seenAt": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "delivered": {
+          "type": "boolean",
+          "description": "True once a result event carrying this notice was handed to the pet."
+        }
+      },
+      "additionalProperties": true
+    },
+    "TabDiagnostic": {
+      "title": "TabDiagnostic",
+      "description": "What one page last reported about its own session read. Diagnostics only: nothing here can mark a notice seen, and the pet never reads it.",
+      "type": "object",
+      "required": [
+        "tabId",
+        "sessionId",
+        "reader",
+        "readerReason",
+        "byIdCount",
+        "buildId",
+        "at"
+      ],
+      "properties": {
+        "tabId": {
+          "type": "string"
+        },
+        "sessionId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reader": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/SessionReaderIndex"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "readerReason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "byIdCount": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "maximum": 10000
+        },
+        "buildId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 64
+        },
+        "at": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": true
+    },
+    "StatePayload": {
+      "title": "StatePayload",
+      "description": "GET /state response, host to pet. The pet reads sessions and revision; every other key is alignment or diagnosis and may be ignored, which is why new keys are additive on v1.",
+      "type": "object",
+      "required": [
+        "v",
+        "revision",
+        "sessions",
+        "notices",
+        "petPort",
+        "browserRoutes",
+        "buildId",
+        "pluginVersion",
+        "browserTabs"
+      ],
+      "properties": {
+        "v": {
+          "const": 1
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sessions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SessionProgressSnapshot"
+          }
+        },
+        "notices": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/NoticeSnapshot"
+          }
+        },
+        "petPort": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Actual pet port in force, or null before the first successful handshake. Process presence is not a connection."
+        },
+        "browserRoutes": {
+          "type": "boolean"
+        },
+        "buildId": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "pluginVersion": {
+          "type": "string"
+        },
+        "browserTabs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TabDiagnostic"
+          }
+        }
+      },
+      "additionalProperties": true
+    }
+  }
+}

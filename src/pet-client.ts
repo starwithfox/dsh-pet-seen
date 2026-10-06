@@ -20,8 +20,8 @@
 
 import { request as httpRequest } from 'node:http'
 import { randomUUID } from 'node:crypto'
-import { EVENT_SOURCE, PROTOCOL_VERSION, MAX_RESPONSE_BODY_BYTES } from './protocol.js'
-import type { HelloRequest, PetEvent } from './protocol.js'
+import { BRIDGE_CAPABILITIES, EVENT_SOURCE, PROTOCOL_VERSION, MAX_RESPONSE_BODY_BYTES } from './protocol.js'
+import type { BridgeCapability, HelloRequest, HelloResponse, PetEvent, ProtocolRange } from './protocol.js'
 
 /** Construction options for {@link PetClient}. */
 export interface PetClientOptions {
@@ -212,17 +212,32 @@ export class PetClient {
 /**
  * Build a `/hello` acknowledgement for the pet.
  *
+ * The negotiation is deliberately one-sided and tiny (PL-PR-NW-02): the host
+ * advertises {@link BRIDGE_CAPABILITIES}, and `agreed` is that set filtered by
+ * what this particular pet declared. All of it is additive on v1, so a pet that
+ * predates the negotiation receives the same 200 it always did, plus two fields
+ * it will ignore.
+ *
  * @param revision - current snapshot revision.
- * @param petPort - port the pet should keep listening on.
+ * @param hello - the parsed handshake; its `capabilities` decide `agreed`.
  * @returns the response body.
  */
-export function helloResponse(revision: number, petPort: number): {
-  v: typeof PROTOCOL_VERSION
-  ok: true
-  revision: number
-  petPort: number
-} {
-  return { v: PROTOCOL_VERSION, ok: true, revision, petPort }
+export function helloResponse(revision: number, hello: HelloRequest): HelloResponse {
+  const declared = hello.capabilities
+  return {
+    v: PROTOCOL_VERSION,
+    ok: true,
+    revision,
+    petPort: hello.port,
+    capabilities: BRIDGE_CAPABILITIES,
+    // The host is the arbiter: what it will rely on is its own set filtered by
+    // the pet's declaration, never the pet's claim on its own.
+    agreed: declared === undefined
+      ? []
+      : BRIDGE_CAPABILITIES.filter((capability) => declared.includes(capability)),
+    ...(declared === undefined ? { legacy: true as const } : {}),
+    ...(hello.petVersion === undefined ? {} : { petVersion: hello.petVersion }),
+  }
 }
 
 /**
@@ -243,13 +258,65 @@ export function parseHello(
   const record = body as Record<string, unknown>
   if (record.v !== PROTOCOL_VERSION) return { ok: false, reason: 'version-mismatch' }
   if (!isPort(record.port)) return { ok: false, reason: 'invalid-port' }
+  const protocol = parseProtocolRange(record.protocol)
+  const capabilities = parseCapabilities(record.capabilities)
   const hello: HelloRequest = {
     v: PROTOCOL_VERSION,
     port: record.port,
     ...(typeof record.petVersion === 'string' ? { petVersion: clampPlain(record.petVersion, 64) } : {}),
     ...(typeof record.token === 'string' ? { token: record.token } : {}),
+    ...(protocol === undefined ? {} : { protocol }),
+    ...(capabilities === undefined ? {} : { capabilities }),
   }
   return { ok: true, hello }
+}
+
+/**
+ * Read the optional protocol range.
+ *
+ * A malformed range is dropped rather than treated as fatal: demanding agreement
+ * here would turn a forward-compatible extension into a handshake failure, which
+ * is the one outcome `/hello` must never produce (PL-PR-NW-02). The pet's `v`
+ * check stays the real gate.
+ *
+ * @param value - raw field from the request body.
+ * @returns the range, or undefined when absent or unusable.
+ */
+function parseProtocolRange(value: unknown): ProtocolRange | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
+  const record = value as Record<string, unknown>
+  const { min, max } = record
+  if (!isRevision(min) || !isRevision(max) || min > max) return undefined
+  return { min, max }
+}
+
+/** Whether a value could be a protocol revision number. */
+function isRevision(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 1
+}
+
+/**
+ * Read the optional capability declaration.
+ *
+ * Unknown names are dropped instead of rejected, for the same reason the range
+ * is: a newer pet may name a capability this host has never heard of, and that
+ * must still be a successful handshake. Absent or non-array yields `undefined`
+ * (a legacy pet); an empty array stays an empty array, which says "aware of the
+ * negotiation, implements none of it" — a different fact, and the reason the two
+ * are not collapsed here.
+ *
+ * @param value - raw field from the request body.
+ * @returns the recognized capabilities in the protocol's own order, or undefined.
+ */
+function parseCapabilities(value: unknown): BridgeCapability[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const seen = new Set<BridgeCapability>()
+  for (const item of value) {
+    if (typeof item !== 'string') continue
+    const capability = BRIDGE_CAPABILITIES.find((candidate) => candidate === item)
+    if (capability !== undefined) seen.add(capability)
+  }
+  return BRIDGE_CAPABILITIES.filter((capability) => seen.has(capability))
 }
 
 /** Bound a plain string field without pulling in the title-oriented helper. */

@@ -16,7 +16,7 @@ window.__ModuleLoader__.load({
 		* ("host new, page old", or the reverse) stops being silent. See the build
 		* handshake (PL-EN-NW-02).
 		*/
-		const BUILD_ID = "6c6364f6dcfe36c2";
+		const BUILD_ID = "f3a162e9d115c434";
 		/**
 		* Browser-facing route paths. Each is registered as its own `exact` route so a
 		* method mismatch is answered per path instead of falling through to a shared

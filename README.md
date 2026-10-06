@@ -209,7 +209,9 @@ curl "http://127.0.0.1:3080/pet-bridge/notices?sessionId=<会话 id>"
 ### 4.2 桌宠 → 插件（控制端口）
 
 ```http
-POST /hello { "v": 1, "petVersion": "…", "port": 17322, "token": "…" }
+POST /hello { "v": 1, "petVersion": "…", "port": 17322, "token": "…",
+              "protocol": { "min": 1, "max": 1 }, "capabilities": ["events", "ack-shown"] }
+             # 响应：{ v, ok, revision, petPort, capabilities, agreed, legacy?, petVersion? }
 GET  /state?token=…            # { v, revision, sessions, notices, petPort, browserRoutes, browserTabs, buildId, pluginVersion }
 POST /ack   { "v": 1, "noticeId": "…", "action": "shown" | "dismissed", "token": "…" }
 ```
@@ -233,7 +235,37 @@ POST /ack   { "v": 1, "noticeId": "…", "action": "shown" | "dismissed", "token
 
 启动顺序任一侧先起都可以：桌宠先监听自己的端口，重试 `/hello`，成功后拉 `/state` 按 `noticeId` 对齐本地提示。插件每次重启轮换 token，桌宠认证失败后重读文件再握手。
 
-`shown` 只表示桌宠**已实际显示**，不能从 HTTP POST 成功推断。
+`shown` 只表示桌宠**已实际显示**，不能从 HTTP POST 成功推断 —— 而且只有真声明了 `ack-shown` 的桌宠才谈得上这一条（见下）。
+
+#### 4.2.1 能力协商（`PL-PR-NW-02`）
+
+两个方向都可省。**省 ≠ 空**，这是本节唯一必须记住的一条。
+
+| 字段 | 方向 | 含义 |
+| --- | --- | --- |
+| `capabilities` | 桌宠 → 插件 | 你实现了哪些能力。**整个字段省略 = 旧桌宠**（响应里给 `legacy`）；`[]` = 明确声明"一个都不实现"。两者是不同的读数 |
+| `protocol` | 桌宠 → 插件 | 你能说的协议版本区间（含两端）。写坏只是被忽略，不会让握手失败 |
+| `capabilities` | 插件 → 桌宠 | 插件支持的能力全集（**广告**，不是"你会做"） |
+| `agreed` | 插件 → 桌宠 | 插件**真正会依赖**的交集；旧桌宠拿到 `[]` |
+| `legacy` | 插件 → 桌宠 | 只在请求没带 `capabilities` 时出现 |
+| `petVersion` | 插件 → 桌宠 | 回显你报的版本（你报了才有） |
+
+| 能力 | 含义 |
+| --- | --- |
+| `events` | 收 `POST /event`（事实上每个桌宠都有） |
+| `state-sync` | 拉 `GET /state` 并按快照对齐本地提示 |
+| `ack-shown` | 用 `/ack action=shown` 回报"提示真的上屏了" |
+| `ack-dismissed` | 用 `/ack action=dismissed` 回报"用户手动关了" |
+| `notice-seen` | 认得 `notice/seen` = "撤掉那条提示" |
+
+**降级语义 —— 缺能力不阻塞接收**：
+
+- 什么都不声明 ⇒ 握手照旧 200、事件照旧推；插件**不得**把你当成会回报 `shown` 的端。`agreed: []` 就是这句话的机器可读形式。
+- 声明了子集 ⇒ 只有交集中的能力会被依赖；没声明的按"没有"处理。
+- 未知能力名 / 未知字段 / 写坏的 `protocol` ⇒ **忽略**，不报错。新能力只有这样才能在不升协议版本的前提下加进来。
+- 与"认不出的 `reason` 要给中性文案"（§4.4）是两件事，互不影响。
+
+**契约的机器可读副本**：`protocol/bridge-v1.schema.json`（随包发布，`files` 里有它）。它列了每个消息的必填/可选字段、封闭枚举、未知字段规则，以及"已实现 / `reserved`"两组事件名；本节的散文与它由 `tests/negotiation.test.ts` 逐条对锁 —— 只改一边会红。
 
 ### 4.3 浏览器 → 插件（同源路由）
 

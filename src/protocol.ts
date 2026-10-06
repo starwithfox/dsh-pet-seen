@@ -126,6 +126,38 @@ export type PetEventName =
   | 'session/removed'
 
 /**
+ * The normalized events this host actually dispatches, as a runtime list.
+ *
+ * Its sibling {@link RESERVED_PET_EVENT_NAMES} is the other half of the same
+ * union: `session/removed` is named here in the type, accepted by the pet's own
+ * `EVENT_NAMES` whitelist, and listed in `README.md` §4.1 — but the host
+ * subscribes to nothing that would ever send it, and `NoticeStore.removeSession`
+ * has no caller. Publishing it as an implemented event would turn that debt into
+ * a promise (IS-014, PL-PR-IV-01), so the published schema carries it as
+ * **reserved** instead.
+ *
+ * Runtime arrays rather than types alone because `protocol/bridge-v1.schema.json`
+ * enumerates both groups and the drift test compares them by value (PL-PR-NW-02).
+ */
+export const PET_EVENT_NAMES: readonly PetEventName[] = [
+  'idle',
+  'running',
+  'completed',
+  'error',
+  'notice/seen',
+]
+
+/**
+ * Events named in the union that this host never dispatches.
+ *
+ * Ownership is `PL-PR-IV-01`; when the runtime probe settles that item, the name
+ * moves between the two lists and nothing else about the wire format changes
+ * (`protocol/bridge-v1.schema.json` states the same rule as a compatibility
+ * clause).
+ */
+export const RESERVED_PET_EVENT_NAMES: readonly PetEventName[] = ['session/removed']
+
+/**
  * Turn-end reason kinds the notification state machine distinguishes. Mirrors
  * `TurnEndReasonMap` from `@deepseek-ai/dsh-session` without importing it.
  *
@@ -348,6 +380,50 @@ export interface StatePayload {
   readonly browserTabs: readonly TabDiagnostic[]
 }
 
+/**
+ * Capability names a pet and this host negotiate at `/hello` (PL-PR-NW-02).
+ *
+ * One vocabulary for both directions: the pet declares which of these it
+ * implements, and the host answers with the set it supports plus the
+ * intersection it will actually rely on. A capability does not gate the event
+ * stream — a missing one only removes an *assumption*:
+ *
+ * - `events` — accepts `POST /event` at all.
+ * - `state-sync` — pulls `GET /state` and aligns its popups to that snapshot.
+ * - `ack-shown` — reports a popup that is really on screen through `/ack`.
+ * - `ack-dismissed` — reports a popup the user closed by hand.
+ * - `notice-seen` — treats `notice/seen` as "retire that popup".
+ *
+ * A pet that declares no set at all is a **legacy** pet: the handshake and every
+ * push keep working exactly as before, and the only thing the host may not do is
+ * read the absent `ack-shown` as "that popup was never displayed".
+ *
+ * The drift test compares this list, `protocol/bridge-v1.schema.json`, and the
+ * second receiver in `tools/mock-pet.mjs` by value.
+ */
+export const BRIDGE_CAPABILITIES = [
+  'events',
+  'state-sync',
+  'ack-shown',
+  'ack-dismissed',
+  'notice-seen',
+] as const
+
+/** One negotiated capability name. */
+export type BridgeCapability = (typeof BRIDGE_CAPABILITIES)[number]
+
+/**
+ * Protocol revisions a pet says it can speak, inclusive on both ends.
+ *
+ * Additive on v1: a pet that omits it is simply not asked to agree on a range,
+ * and the handshake still succeeds — the host answers on
+ * {@link PROTOCOL_VERSION} and the pet's `v` check remains the real gate.
+ */
+export interface ProtocolRange {
+  readonly min: number
+  readonly max: number
+}
+
 /** `POST /hello` request body from the pet. */
 export interface HelloRequest {
   readonly v: typeof PROTOCOL_VERSION
@@ -356,6 +432,16 @@ export interface HelloRequest {
   readonly port: number
   /** Shared secret; written by the host to `~/.dsh/pet-bridge.json`. */
   readonly token?: string
+  /** Revisions the pet can speak; omitted by a pet that never negotiated one. */
+  readonly protocol?: ProtocolRange
+  /**
+   * What the pet implements, out of {@link BRIDGE_CAPABILITIES}.
+   *
+   * Deliberately the *absence* of the field, not an empty array, that means
+   * "legacy": `[]` is a modern pet that declares it implements none of them, and
+   * the two are different facts about the sender.
+   */
+  readonly capabilities?: readonly BridgeCapability[]
 }
 
 /** `POST /hello` response body. */
@@ -365,6 +451,24 @@ export interface HelloResponse {
   readonly revision: number
   /** Port the pet should keep listening on; echoed for a cheap sanity check. */
   readonly petPort: number
+  /** What this host supports, so the pet can fall back deliberately. */
+  readonly capabilities: readonly BridgeCapability[]
+  /**
+   * The intersection the host will rely on: its own set filtered by what the pet
+   * declared. Empty for a legacy pet — which also means the host assumes no
+   * acknowledgement behaviour at all.
+   */
+  readonly agreed: readonly BridgeCapability[]
+  /** Present only when the request carried no `capabilities` field. */
+  readonly legacy?: true
+  /**
+   * Echo of {@link HelloRequest.petVersion}, present when the pet sent one.
+   *
+   * Declared here because the control listener has always put it on the wire:
+   * the type used to stop short of the bytes, which is exactly the kind of gap
+   * the published schema is meant to make impossible (PL-PR-NW-02).
+   */
+  readonly petVersion?: string
 }
 
 /** `POST /ack` request body from the pet. */
@@ -380,6 +484,8 @@ export interface AckResponse {
   readonly v: typeof PROTOCOL_VERSION
   readonly ok: boolean
   readonly state?: NoticeState
+  /** Machine-readable failure reason, on the same footing as `/hello`'s. */
+  readonly reason?: string
 }
 
 /** `POST /pet-bridge/visibility` request body from the browser page. */

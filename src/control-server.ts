@@ -288,10 +288,19 @@ async function handle(
     }
     deps.onHello(parsed.hello.port)
     const revision = deps.statePayload().revision
-    sendJson(res, 200, {
-      ...helloResponse(revision, parsed.hello.port),
-      ...(parsed.hello.petVersion === undefined ? {} : { petVersion: parsed.hello.petVersion }),
-    })
+    const negotiated = helloResponse(revision, parsed.hello)
+    // The negotiation is only worth reporting if it is visible somewhere: the
+    // pet reads `agreed` off the response, and a human reads it here. Legacy is
+    // said out loud because "no declaration" and "declared none" are different
+    // facts that would otherwise look identical in a log (PL-PR-NW-02).
+    const declared = parsed.hello.capabilities
+    const range = parsed.hello.protocol
+    log(
+      `hello accepted: ${declared === undefined ? 'legacy pet (no capability declaration)' : `declared ${declared.join(',') || 'none'}`}`
+      + `${range === undefined ? '' : `, speaks v${range.min}..v${range.max}`}`
+      + `; host agrees on ${negotiated.agreed.join(',') || 'nothing'}`,
+    )
+    sendJson(res, 200, negotiated)
     return
   }
 

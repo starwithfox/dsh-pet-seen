@@ -15,6 +15,12 @@
  *
  * Usage:
  *   node tools/mock-pet.mjs [--port 17322] [--no-handshake] [--quiet] [--ack-shown]
+ *                           [--no-capabilities]
+ *
+ * `--no-capabilities` makes the handshake look like a pet that predates the
+ * capability negotiation: same receiver, no `capabilities` field. That is the
+ * legacy reading `PL-PR-NW-02` has to keep working, and it is the cheap way to
+ * reproduce it by hand.
  *
  * `--ack-shown` makes the pet acknowledge every delivered completion as
  * `shown` straight away, the way a real pet does once it has put the popup on
@@ -44,6 +50,18 @@ const port = Number(flag('port', '17322'))
 const quiet = has('quiet')
 const autoHandshake = !has('no-handshake')
 const autoAckShown = has('ack-shown')
+const noCapabilities = has('no-capabilities')
+
+/**
+ * Capability names this receiver implements, mirroring `BRIDGE_CAPABILITIES` in
+ * `src/protocol.ts` (PL-PR-NW-02).
+ *
+ * A literal on purpose: this file is a second implementation of the pet half, so
+ * it must not import the plugin's source — `tests/negotiation.test.ts` compares
+ * the two lists by value, and `--no-capabilities` runs the same receiver as the
+ * legacy pet that declares nothing at all.
+ */
+const CAPABILITIES = ['events', 'state-sync', 'ack-shown', 'ack-dismissed', 'notice-seen']
 
 /** Popups this pet believes are on screen, keyed by noticeId. */
 const shown = new Map()
@@ -184,8 +202,18 @@ server.listen(port, '127.0.0.1', async () => {
     if (!ready) {
       log('no ~/.dsh/pet-bridge.json yet; is the DSH plugin running?')
     } else {
-      const hello = await control('/hello', { v: 1, petVersion: 'mock-pet', port })
+      const hello = await control('/hello', {
+        v: 1,
+        petVersion: 'mock-pet',
+        port,
+        ...(noCapabilities ? {} : { capabilities: CAPABILITIES }),
+      })
       log(`hello -> ${JSON.stringify(hello)}`)
+      // Say the negotiation out loud: the host's `agreed` is what it will rely
+      // on, and `legacy` is the host's reading of "declared nothing" — the two
+      // readings this receiver exists to keep apart (PL-PR-NW-02).
+      log(`negotiated: agreed=[${(hello?.agreed ?? []).join(',')}]`
+        + `${hello?.legacy === true ? ' (legacy handshake: no capability declaration)' : ''}`)
       const state = await readState()
       if (state !== null) {
         log(`/state -> ${state.sessions?.length ?? 0} session(s), ${state.notices?.length ?? 0} notice(s)`)

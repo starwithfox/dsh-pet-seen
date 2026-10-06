@@ -21,7 +21,7 @@ import { bridge } from './harness.js'
 import { fakeWebServer } from './web-server-fixture.js'
 import type { FakeWebServer } from './web-server-fixture.js'
 
-const { BROWSER_ROUTES, BUILD_ID, PLUGIN_VERSION, PROTOCOL_VERSION, apply } = bridge
+const { BRIDGE_CAPABILITIES, BROWSER_ROUTES, BUILD_ID, PLUGIN_VERSION, PROTOCOL_VERSION, apply } = bridge
 
 /** A fake pet: a listener that records whatever the plugin pushes at it. */
 interface FakePet {
@@ -351,6 +351,101 @@ describe('loopback integration', () => {
       const badMethod = await fetch(`http://127.0.0.1:${harness.controlPort}/hello`)
       assert.equal(badMethod.status, 405)
       await badMethod.text()
+    } finally {
+      harness.dispose()
+    }
+  })
+
+  it('negotiates capabilities without changing the legacy handshake', async () => {
+    const harness = await startPlugin(pet.port)
+    try {
+      // A pet that declares nothing is the pre-negotiation pet: the handshake
+      // succeeds and the host says plainly that it may assume nothing.
+      const legacy = await controlPost(harness.controlPort, '/hello', {
+        v: PROTOCOL_VERSION,
+        port: pet.port,
+        token: harness.token,
+      })
+      assert.equal(legacy.status, 200)
+      assert.equal(legacy.body?.ok, true)
+      assert.deepEqual(legacy.body?.agreed, [], 'nothing is assumed about a legacy pet')
+      assert.equal(legacy.body?.legacy, true)
+      assert.deepEqual(legacy.body?.capabilities, [...BRIDGE_CAPABILITIES])
+
+      // The same receiver, now declaring a subset, is agreed with on exactly
+      // that subset — the host's own set is advertised, never agreed by default.
+      const partial = await controlPost(harness.controlPort, '/hello', {
+        v: PROTOCOL_VERSION,
+        petVersion: 'partial-pet',
+        port: pet.port,
+        token: harness.token,
+        capabilities: ['events', 'ack-shown'],
+        protocol: { min: 1, max: 1 },
+      })
+      assert.equal(partial.status, 200)
+      assert.deepEqual(partial.body?.agreed, ['events', 'ack-shown'])
+      assert.equal('legacy' in (partial.body ?? {}), false)
+      assert.equal(partial.body?.petVersion, 'partial-pet', 'the version echo survives the negotiation')
+
+      // Declaring nothing is not the same as declaring an empty set, and the
+      // difference has to survive the real listener, not only `parseHello`.
+      const declaredNone = await controlPost(harness.controlPort, '/hello', {
+        v: PROTOCOL_VERSION,
+        port: pet.port,
+        token: harness.token,
+        capabilities: [],
+      })
+      assert.equal(declaredNone.status, 200)
+      assert.deepEqual(declaredNone.body?.agreed, [])
+      assert.equal('legacy' in (declaredNone.body ?? {}), false)
+    } finally {
+      harness.dispose()
+    }
+  })
+
+  it('still pushes and acknowledges for a pet that declared no capabilities', async () => {
+    // The reading this item is judged on: a UI-less receiver on the legacy path
+    // handshakes, receives a result event and gets its `shown` accepted.
+    const harness = await startPlugin(pet.port)
+    try {
+      const hello = await controlPost(harness.controlPort, '/hello', {
+        v: PROTOCOL_VERSION,
+        petVersion: 'legacy-receiver',
+        port: pet.port,
+        token: harness.token,
+      })
+      assert.equal(hello.status, 200)
+
+      const before = pet.received.length
+      const session = { id: 'session-legacy', header: {} }
+      const now = Date.now()
+      harness.emitAgentStatus({ agent: { session, status: 'running' }, status: 'running' })
+      harness.emitSessionEvent(session, { type: 'turn/start', seq: 1, time: now, data: { turn: 3 } })
+      harness.emitSessionEvent(session, {
+        type: 'turn/end',
+        seq: 2,
+        time: now,
+        data: { turn: 3, reason: { kind: 'completed' } },
+      })
+      harness.emitAgentStatus({ agent: { session, status: 'idle' }, status: 'idle' })
+
+      await waitFor(
+        () => pet.received.slice(before).some(event => event.event === 'completed'),
+        'the completion to reach a legacy pet',
+      )
+      const result = pet.received.slice(before).find(event => event.event === 'completed')
+      assert.ok(result !== undefined)
+      assert.equal(typeof result.noticeId, 'string')
+      assert.equal(result.seen, false)
+
+      const ack = await controlPost(harness.controlPort, '/ack', {
+        noticeId: result.noticeId,
+        action: 'shown',
+        token: harness.token,
+      })
+      assert.equal(ack.status, 200)
+      assert.equal(ack.body?.ok, true)
+      assert.equal(ack.body?.state, 'shown')
     } finally {
       harness.dispose()
     }

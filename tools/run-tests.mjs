@@ -40,6 +40,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const TEST_FILES = [
   'state',
   'protocol',
+  'negotiation',
   'pins',
   'credentials',
   'browser-auth',
