@@ -265,7 +265,7 @@ POST /ack   { "v": 1, "noticeId": "…", "action": "shown" | "dismissed", "token
 - 未知能力名 / 未知字段 / 写坏的 `protocol` ⇒ **忽略**，不报错。新能力只有这样才能在不升协议版本的前提下加进来。
 - 与"认不出的 `reason` 要给中性文案"（§4.4）是两件事，互不影响。
 
-**契约的机器可读副本**：`protocol/bridge-v1.schema.json`（随包发布，`files` 里有它）。它列了每个消息的必填/可选字段、封闭枚举、未知字段规则，以及"已实现 / `reserved`"两组事件名；本节的散文与它由 `tests/negotiation.test.ts` 逐条对锁 —— 只改一边会红。
+**契约的机器可读副本**：`protocol/bridge-v1.schema.json`（随包发布，`files` 里有它）。它列了每个消息的必填/可选字段、封闭枚举、未知字段规则，以及事件名的**完整**枚举 —— 这个 enum 就是全部词表，没有"预留却永不发"的第二组（`session/removed` 曾以 `reserved` 名占位，运行时探针证明它没有可触发面后已被撤销，见 §4.1）；本节的散文与它由 `tests/negotiation.test.ts` 逐条对锁 —— 只改一边会红。
 
 ### 4.3 浏览器 → 插件（同源路由）
 
