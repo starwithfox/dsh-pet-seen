@@ -85,6 +85,32 @@ def http(url, obj=None, headers=None, method=None, raw=None, timeout=5.0):
         return None, {"_error": f"{type(e).__name__}: {e}"}
 
 
+def screen_line(path, attempts=30):
+    """取接收端**自己写**的那份面板日志（`--log`）里最后一行 `[screen] …`。
+
+    PL-TS-NW-04：这行是「屏上现在有什么」的判据（条数 + ids + status），比内部状态更靠外。
+    读不到宁可回 None（调用方的断言会红），不猜。
+    """
+    for _ in range(attempts):
+        try:
+            with open(path, "r", encoding="utf-8", errors="replace") as f:
+                hits = [ln.rstrip("\n") for ln in f if "[screen]" in ln]
+            if hits:
+                return hits[-1]
+        except OSError:
+            pass
+        time.sleep(0.1)
+    return None
+
+
+def notice_of(state, notice_id):
+    """`__debug/state.active[]` 里那条提示的**全字段**（没有就 None）—— PL-TS-NW-04 的行为面快照。"""
+    for n in ((state or {}).get("active") or []):
+        if n.get("noticeId") == notice_id:
+            return n
+    return None
+
+
 # ------------------------------------------------------------------ 假宿主
 
 class FakeHost:
@@ -331,11 +357,41 @@ def main() -> int:
         check("shown 回报只在其真的画上屏之后发出", bool(got))
         before = len(host.acks)
 
-        st, resp = post_event("e1", "completed", "completed", "N1", seen=False)
+        # ---- 3b. 行为面：同一 id 重复投递**不得改本地状态**（PL-TS-NW-04）
+        # 上面那三条查的是 HTTP 响应 + 计数器；这一组查"屏上 / 接收端内部有没有被动过"。
+        # 先等 ack 那条路**走完**（ackShownSent 落定）再拍快照，免得拍在"ack 还在路上"的中间态上。
+        wait_for(lambda: (notice_of(debug() or {}, "N1") or {}).get("ackShownSent") is True, 8)
+        screen0 = screen_line(panel_path)
+        snap0 = debug() or {}
+        notice0 = notice_of(snap0, "N1")
+        events0 = list(snap0.get("lastEvents") or [])
+        # 只比"这条事件可能碰到"的计数器：alignDone / hello* 归 /state 那条循环，与本组无关。
+        EVENT_COUNTERS = ("eventReceived", "eventDuplicate", "eventMalformed",
+                          "popupOpened", "popupClosed", "reopenBlocked", "ackQueued")
+        counters0 = {k: (snap0.get("counters") or {}).get(k, 0) for k in EVENT_COUNTERS}
+
+        # 重投载荷**故意与首发不同**（不带 title、换了 message）：协议只规定 id 全局唯一，
+        # 没保证重投载荷逐字相同（宿主重启后重放就是这种形状）⇒ 载荷不同，"字段被改写"才可观测。
+        st, resp = post_event("e1", "completed", "completed", "N1", seen=False, message="重投的文案不该上屏")
         check("同一 id 重复投递 -> 200 且标 duplicate", st == 200 and (resp or {}).get("duplicate") is True, f"{st} {resp}")
         time.sleep(0.4)
         check("重复事件没被再处理一次（没有新的 /ack）", len(host.acks) == before, f"{len(host.acks)} vs {before}")
         check("重复计数 +1", (debug() or {}).get("counters", {}).get("eventDuplicate") == 1)
+
+        screen1 = screen_line(panel_path)
+        snap1 = debug() or {}
+        counters1 = {k: (snap1.get("counters") or {}).get(k, 0) for k in EVENT_COUNTERS}
+        deltas = {k: counters1[k] - counters0[k] for k in EVENT_COUNTERS if counters1[k] != counters0[k]}
+        check("重复投递后屏上提示条数与 ids 不变（[screen] 行逐字相同）",
+              screen0 is not None and screen0 == screen1, f"{screen0!r} -> {screen1!r}")
+        check("重复投递后那条提示的文案与字段逐字不变",
+              notice0 is not None and notice0 == notice_of(snap1, "N1"),
+              f"{notice0} -> {notice_of(snap1, 'N1')}")
+        check("重复投递没有被再处理一遍（lastEvents 逐字不变）",
+              list(snap1.get("lastEvents") or []) == events0,
+              f"{len(events0)} -> {len(snap1.get('lastEvents') or [])}")
+        check("重复投递只动 eventReceived/eventDuplicate 两个计数器（没有别的副作用）",
+              deltas == {"eventReceived": 1, "eventDuplicate": 1}, str(deltas))
 
         # ---- 4. notice/seen 取消 + 乱序/重复不得重建
         st, _ = post_event("m1", "notice/seen", notice_id="N1")
