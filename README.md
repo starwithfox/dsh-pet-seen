@@ -145,6 +145,32 @@ curl "http://127.0.0.1:3080/pet-bridge/notices?sessionId=<会话 id>"
 - **测一个没测过的宿主版本**（判定一律看**宿主状态**，不要只看命令退出码）：① 取**宿主运行时**的版本 —— 桌面端读 `app.asar` 里那份 `dsh-app-boot` 的 `package.json`，**不是** `dsh` CLI 那份；② 离线算区间 `semver.satisfies(v, <peer 范围>, { includePrerelease: true })`；③ 真机冒烟 ——先确认插件**没被禁用**（被兼容闸门拦住时是 profile 里 `row.disabled = true` 加 stderr 一行，**不写进 `/state`**），再要 `npm run probe:http` 为 `PASS`。
 - 被拦时可 `dsh plugin allow-version` 写**临时豁免**：**豁免不是验收**，它只让你能继续测。
 - ⚠️ **别把 `pluginVersion` 当成宿主兼容性**：它是**插件自己**的版本（`0.1.1`）；`buildId` 表 "同一版重新构建"。两者都**不**表示某个宿主版本被支持 —— 那件事只由上面的 peer 范围表达。
+- 装之前想知道它到底能碰到什么、坏了会怎样：见下一节 §2.5。
+
+### 2.5 装之前：权限、依赖与失败边界
+
+**权限信号**（逐项对着源码写实）
+
+| 信号 | 实际行为 |
+| --- | --- |
+| `files: write` | 只写**一个**文件：`~/.dsh/pet-bridge.json`（先写 `.tmp` 再改名、`0600`）。不写日志、事件不落盘 |
+| `network: specified-services` | **只走回环**：控制端 `listen(port, '127.0.0.1')`，桌宠端固定 `host: '127.0.0.1'`；没有对外的出站请求 |
+| `commands: none` | 不起任何子进程（源码里没有 `child_process` / `exec` / `spawn`） |
+| `credentials: ["api-key"]` | 每进程 `randomBytes(32)` 铸一枚**一次性** token，只写进上面那个 `0600` 文件，不打印、不进日志 |
+
+**依赖**：宿主 harness（`dsh-session` / `dsh-agent`）在本包里**只是类型依赖**，运行时一个都不 `import`（§5.4）；`cordis` / `schemastery` 是 peer；Node `^22.19.0 || >=24.0.0`。
+
+**失败边界**（只列"坏了会怎样"，详述见各自那节）
+
+| 情形 | 结果 |
+| --- | --- |
+| 控制端口被占用 | 桥接**停用**并在宿主里报错，**不**把 token 或事件发给占用端口的进程（§4.5） |
+| 桌宠不可达 / 拒绝 | 事件**丢弃**：不重试、不落盘、不阻塞会话（§4.1） |
+| 拿不到可靠结果 | **不报"看到了"** —— 宁可漏报，也不把"没看到"写成"看到了"（§1.2） |
+| 宿主新增 `turn/end` kind | **编译期**直接失败（`_ReasonsCovered`），不会静默落进 `unknown`（§4.1） |
+| 宿主重启 | 未确认通知**不按原 ID 回来**；通知本身也没有硬上限（`maxNotices` 只是保留上限） |
+
+**兼容性声明**：`package.json` 的 `dsh.compatibility.dshReleases` **只声明真机验收过的版本**，其余一律 `unknown` —— 这是"放行 ≠ 兼容"的机器可读版本，口径见 §2.4。
 
 ## 3. 配置
 
