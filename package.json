@@ -1,6 +1,6 @@
 {
   "name": "dsh-pet-seen",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Bridge between DeepSeek Harness and a local desktop pet: session event push, per-session progress buckets, and 'user has actually seen it' notice acknowledgement.",
   "keywords": [
     "deepseek",

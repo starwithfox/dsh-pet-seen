@@ -76,7 +76,7 @@ dsh plugin add --profile web link:.
 dsh plugin add --profile web file:.
 
 # 第三条渠道：registry 包（不必克隆、不必构建、不能改源码）
-dsh plugin add --profile web dsh-pet-seen@0.1.1
+dsh plugin add --profile web dsh-pet-seen@0.1.2
 
 # 装完必须重启 DSH 才会加载宿主半边（这一步会中断正在运行的会话）
 ```
@@ -85,8 +85,8 @@ dsh plugin add --profile web dsh-pet-seen@0.1.1
 - **克隆后不需要构建**：`lib/index.js`（宿主侧）与 `client/client.js`（浏览器侧）**已入库**，安装过程不需要 Node.js 或任何工具链。
 - **只有改了 `src/` 才需要构建**（Node 22+）：`npm install && npm run build`；改完必须把 `src/` 与重建后的产物**一起提交**，否则 `npm run check` 会红。产物由 tsdown 生成，**不要手改**。
 - `dsh plugin` 只是 pnpm 的一层封装，`add` **不会热加载**已运行的宿主。
-- **registry 渠道**（`dsh-pet-seen@<版本>`）：包已发布在 npm 上（`npm view dsh-pet-seen dist-tags` 现取为 `latest = 0.1.1`），**这一条不需要克隆、不需要构建、也不能改源码** —— 包里带的是构建好的两半产物（`lib/index.js` + `client/client.js`）、`protocol/` 与 `cordis.patch.yml`。走它就不必看上面的 `cd` 与克隆步骤。
-  - **写死版本号，别指望 `@latest`**（现取 2026-10-06，本机 `pnpm 11.21.0`）：`pnpm add dsh-pet-seen`（等价 `@latest`）解析到的是 **`0.0.1`**，而 `pnpm add dsh-pet-seen@0.1.1` 装到的才是 **`0.1.1`**。测法（可复现）：一个空目录 + `pnpm-workspace.yaml`，`.npmrc` 分别写 `registry=https://registry.npmjs.org/` 与默认的镜像源各跑一次 —— **两次都解析成 `0.0.1`** ⇒ 是 pnpm 侧 resolver 的行为，**不是**源不同步（同一时刻 `npm view` 两个源都报 `latest = 0.1.1`）。列版本 `@0.1.2` 之类就不会被这一步拦住。
+- **registry 渠道**（`dsh-pet-seen@<版本>`）：包已发布在 npm 上（`npm view dsh-pet-seen dist-tags` 现取为 `latest = 0.1.2`），**这一条不需要克隆、不需要构建、也不能改源码** —— 包里带的是构建好的两半产物（`lib/index.js` + `client/client.js`）、`protocol/` 与 `cordis.patch.yml`。走它就不必看上面的 `cd` 与克隆步骤。
+  - **写死版本号，别指望 `@latest`**（现取 2026-10-06，本机 `pnpm 11.21.0`）：`pnpm add dsh-pet-seen`（等价 `@latest`）解析到的是 **`0.0.1`**，而 `pnpm add dsh-pet-seen@0.1.2` 装到的才是 **`0.1.2`**。测法（可复现）：一个空目录 + `pnpm-workspace.yaml`，`.npmrc` 分别写 `registry=https://registry.npmjs.org/` 与默认的镜像源各跑一次 —— **两次都解析成 `0.0.1`** ⇒ 是 pnpm 侧 resolver 的行为，**不是**源不同步（同一时刻 `npm view` 两个源都报 `latest = 0.1.2`）。列版本 `@0.1.2` 之类就不会被这一步拦住。
   - 装完**一定要核对装到的是哪一版**（判据见 §2.3 的「装的是哪一版」那行）—— 这一步是静默的，装错了不会报错。
   - **与上面两条的关系**：源码改不动、`git pull` 也无关；升级 = 换一个版本号再 `add` 一次（见 2.2）。想改源码就用 `link:` / `file:`。
 
@@ -114,7 +114,7 @@ dsh plugin add --profile web dsh-pet-seen@0.1.1
 | 装进 profile 了吗 | 该 profile 的 `dsh.profile.bundles` 里有 `dsh-pet-seen` | 只装不启用时这里没有它，宿主不会加载 |
 | 装的是哪一版 | `bridge-state.mjs` 头部行的 `plugin=<版本>` —— 与**你这次安装命令里写的那一版**逐字相同（`npm view dsh-pet-seen dist-tags.latest` 只是查最新版是多少，**不是**判据） | 走 registry 渠道时"我装到的是哪一版"最容易静默装错（`add dsh-pet-seen` 现取会解析成 `0.0.1`，见 §2）⇒ 这一行是**唯一**直接读数 |
 | 宿主半边起来了吗 | `~/.dsh/pet-bridge.json` 存在，且 `controlPort` 就是你配的 `17323` | **只有宿主半边会写**这个文件；token 每次宿主启动轮换 |
-| 宿主半边状态可读吗 | `node tools/bridge-state.mjs` 打出头部行（形如 `controlPort=17323 … plugin=0.1.1 build=<16 位>`） | 它自己读文件里的 token 去问 `/state`，不必手抄 token |
+| 宿主半边状态可读吗 | `node tools/bridge-state.mjs` 打出头部行（形如 `controlPort=17323 … plugin=0.1.2 build=<16 位>`） | 它自己读文件里的 token 去问 `/state`，不必手抄 token |
 | 页面半边在报吗 | `/state` 的 `browserTabs` 里有你那个 tab 的行，且带 `reader=` 与 `build=` | **只有页面半边会报**这两条；行随 15 s 租约过期，"没有行"= 页面没在报，不等于没装 |
 | 两半是同一个构建吗 | tab 行的 `build=` == 头部行的 `build=` | 一次构建必然同 id；两者不同 ⇒ `MIXED`，该 tab 从未报过 ⇒ `OLD`；`npm run probe:http` 把两者都判 FAIL |
 
@@ -144,7 +144,7 @@ curl "http://127.0.0.1:3080/pet-bridge/notices?sessionId=<会话 id>"
 - 声明的宿主范围写在 `package.json` 的 `peerDependencies`：`"@deepseek-ai/dsh": "^0.1.5-rc.2 || ^0.2.0-rc.2"`。**只有 `0.1.5-rc.2`（`web` profile）与 `0.2.0-rc.2`（`desktop` profile）被真机验收过**；这个范围会**放行** `0.1.6` / `0.2.0` 这类同系列新版本，但**未实测的版本不保证兼容**：上游一旦改动本插件依赖的内部面（`uiSession` 读法、`turn/end` 的 kind、`webServer` / `sessions` / `agents` 的服务形状），插件可能**静默**失效。
 - **测一个没测过的宿主版本**（判定一律看**宿主状态**，不要只看命令退出码）：① 取**宿主运行时**的版本 —— 桌面端读 `app.asar` 里那份 `dsh-app-boot` 的 `package.json`，**不是** `dsh` CLI 那份；② 离线算区间 `semver.satisfies(v, <peer 范围>, { includePrerelease: true })`；③ 真机冒烟 ——先确认插件**没被禁用**（被兼容闸门拦住时是 profile 里 `row.disabled = true` 加 stderr 一行，**不写进 `/state`**），再要 `npm run probe:http` 为 `PASS`。
 - 被拦时可 `dsh plugin allow-version` 写**临时豁免**：**豁免不是验收**，它只让你能继续测。
-- ⚠️ **别把 `pluginVersion` 当成宿主兼容性**：它是**插件自己**的版本（`0.1.1`）；`buildId` 表 "同一版重新构建"。两者都**不**表示某个宿主版本被支持 —— 那件事只由上面的 peer 范围表达。
+- ⚠️ **别把 `pluginVersion` 当成宿主兼容性**：它是**插件自己**的版本（`0.1.2`）；`buildId` 表 "同一版重新构建"。两者都**不**表示某个宿主版本被支持 —— 那件事只由上面的 peer 范围表达。
 - 装之前想知道它到底能碰到什么、坏了会怎样：见下一节 §2.5。
 
 ### 2.5 装之前：权限、依赖与失败边界
@@ -450,7 +450,7 @@ harness 的结构化面集中在 **`src/pins.ts`** —— 唯一引用 DSH 内�
 两个 workflow 的分工是固定的：`.github/workflows/ci.yml` 在 push 到 `main` 与每个 PR 上跑 `npm ci` → `npm run check`，Node `22.x` 与 `24.x` 各跑一次（`engines` 声明的就是这两条线）；`.github/workflows/publish.yml` 在**发布 Release（published）**或**手动 dispatch** 时跑：**先读本提交的 `ci` 结果**（不是全绿就当场失败）→ `npm ci` → `npm run check` → 校验 tag 与 `package.json` 的 `version` 一致 → `npm publish`（`prepack` 会先 `npm run build`，所以包里带的是刚重建的两半产物）。
 
 **顺序不能换：先 push、等 `ci` 全绿，再触发发布。** 这不是提醒而是硬闸门 —— publish job 的第一步就是读该提交的 ci 检查结果，`check (22.x)` / `check (24.x)` 有任何一条不是 `success`（或者这个提交还没有结果），发布直接失败。发一个新版本：
-① 改 `package.json` 的 `version`；② `npm run check` 必须绿，改了 `src/**` 就要把重建后的 `lib/` 与 `client/` 一起提交（见 §5.1）；③ push 到 `main`，**等 `ci` 两个 matrix 都绿**；④ 在 GitHub 发 Release，**tag 用 `v<version>`**（例如 `v0.1.1`）—— publish job 会拿 tag 与 `version` 对照，不一致直接失败（发错版本不可逆：npm 的撤回窗口只有 72 小时）；⑤ 等 `publish` 绿，`npm view dsh-pet-seen@<version>` 应能查到。
+① 改 `package.json` 的 `version`；② `npm run check` 必须绿，改了 `src/**` 就要把重建后的 `lib/` 与 `client/` 一起提交（见 §5.1）；③ push 到 `main`，**等 `ci` 两个 matrix 都绿**；④ 在 GitHub 发 Release，**tag 用 `v<version>`**（例如 `v0.1.2`）—— publish job 会拿 tag 与 `version` 对照，不一致直接失败（发错版本不可逆：npm 的撤回窗口只有 72 小时）；⑤ 等 `publish` 绿，`npm view dsh-pet-seen@<version>` 应能查到。
 
 发布只从 CI 走：`npm publish` **不要在本机直接跑** —— 本机 registry 默认是只读镜像，发布走不通，而 OIDC 这条路径本来也不需要任何长期 token。
 
