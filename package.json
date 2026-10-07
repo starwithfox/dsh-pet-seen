@@ -59,6 +59,7 @@
     "prepack": "npm run build",
     "typecheck": "tsc -p tsconfig.check.json && tsc -p tsconfig.client.json && tsc -p tsconfig.test.json --noEmit",
     "compat:0.2.0": "tsc -p tsconfig.compat-0.2.0.json",
+    "compat:0.1.7": "node tools/compat-install.mjs 0.1.7-rc.2 && tsc -p tsconfig.compat-0.1.7.json",
     "build:test": "tsc -p tsconfig.test.json",
     "test": "npm run build:test && node tools/run-tests.mjs",
     "smoke:bundle": "node tools/smoke-bundle.mjs",

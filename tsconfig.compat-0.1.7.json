@@ -1,0 +1,51 @@
+/**
+ * Compatibility type check against the **0.1.7-rc.2** harness declarations.
+ *
+ * The DSH STORE's authoritative window currently resolves to the 0.1.7 line
+ * (`0.1.7-alpha.2` / `0.1.7-rc.1` / `0.1.7-rc.2`), while the declared peer range
+ * `^0.1.5-rc.2 || ^0.2.0-rc.2` intersects none of them — so this gate exists to
+ * turn "does 0.1.7 work" into a reading before anything is declared compatible
+ * (PL-EN-NW-08; the declaration itself is PL-DI-NW-02's, and the runtime half is
+ * PL-TS-IV-07).
+ *
+ * **Why this file needs a `paths` block at all.** `tsconfig.compat-0.2.0.json` is
+ * just an `extends`: the repository's own `node_modules` already *is* 0.2.0-rc.2.
+ * The 0.1.7 line cannot be the tree the ordinary check runs on, so
+ * `tools/compat-install.mjs` installs it privately under the gitignored
+ * `_scratch/` and the four harness specifiers are redirected there. Relative
+ * paths only: an absolute one would leak a machine path into the public face, and
+ * `npm run check`'s leak guard greps `tsconfig*.json` for exactly that.
+ *
+ * All four are redirected, not just the two that follow the DSH version line.
+ * `cordis` / `schemastery` are the same versions on both lines (IS-062), but
+ * leaving them to resolve out of the repository would put two copies of those
+ * declaration graphs in one program, which is the shape that produces spurious
+ * nominal-type errors.
+ *
+ * **What a green run means, and does not.** It says `src/**` type-checks against
+ * the pinned 0.1.7-rc.2 declaration set — the same coupling `src/pins.ts` asserts
+ * against 0.2.0-rc.2, including `_ReasonsCovered` refusing a new turn-end kind.
+ * It is not a runtime verification, it does not cover harness packages that are
+ * neither pinned nor reachable from the pinned ones, and it covers **one**
+ * version: `0.1.7-alpha.2` / `0.1.7-rc.1` are inside the STORE window and outside
+ * this gate.
+ *
+ * ⚠️ **Falsifying this gate needs a mapping that resolves to the wrong file.**
+ * Pointing `paths` at a *missing* path does NOT go red: TypeScript falls back to
+ * ordinary `node_modules` resolution, silently reads the repository's own 0.2.0
+ * tree, and still exits 0. Map a real-but-wrong `.d.ts` instead (IS-072).
+ *
+ * Run `npm run compat:0.1.7`; deliberately **not** part of `npm run check` (it
+ * needs the network and the gitignored `_scratch/`).
+ */
+{
+  "extends": "./tsconfig.types.json",
+  "compilerOptions": {
+    "paths": {
+      "@deepseek-ai/cordis": ["./_scratch/compat-0.1.7-rc.2/node_modules/@deepseek-ai/cordis/lib/types/index.d.ts"],
+      "@deepseek-ai/schemastery": ["./_scratch/compat-0.1.7-rc.2/node_modules/@deepseek-ai/schemastery/lib/types/index.d.ts"],
+      "@deepseek-ai/dsh-session": ["./_scratch/compat-0.1.7-rc.2/node_modules/@deepseek-ai/dsh-session/lib/types/index.d.ts"],
+      "@deepseek-ai/dsh-agent": ["./_scratch/compat-0.1.7-rc.2/node_modules/@deepseek-ai/dsh-agent/lib/types/index.d.ts"]
+    }
+  }
+}
